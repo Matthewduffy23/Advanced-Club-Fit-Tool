@@ -267,7 +267,18 @@ if len(feats) < 3:
 
 tgt_team   = str(tgt.get('Team','—'))
 tgt_league = str(tgt.get('League','—'))
-tgt_ls     = float(LEAGUE_STRENGTHS.get(tgt_league, 50))
+
+def _ls_lookup(league_name):
+    key = str(league_name).strip()
+    if key in LEAGUE_STRENGTHS:
+        return LEAGUE_STRENGTHS[key]
+    key2 = key.rstrip('.')
+    for k, v in LEAGUE_STRENGTHS.items():
+        if k.rstrip('.').lower() == key2.lower():
+            return v
+    return 50.0
+
+tgt_ls = _ls_lookup(tgt_league)
 
 st.markdown(f"""
 <div class="pcard">
@@ -354,69 +365,76 @@ with st.spinner("Computing…"):
 
     cand['_sim'] = sim_pct * 0.5 + sim_act * 0.5
 
-    grp = cand.groupby('Team')
-    club = grp[feats].mean().reset_index()
-    club['League'] = grp['League'].agg(lambda x: x.mode().iloc[0])
+    # Market value on cand before groupby
     if 'Market value' in cand.columns:
         mv_series = pd.to_numeric(cand['Market value'], errors='coerce')
-        median_mv = mv_series.median() or 2_000_000
+        median_mv = float(mv_series.median() or 2_000_000)
         cand['_mv'] = mv_series.fillna(median_mv)
     else:
         cand['_mv'] = 2_000_000
-    club['AvgMV'] = cand.groupby('Team')['_mv'].mean()
-    club['AvgMV'] = club['AvgMV'].fillna(2_000_000)
-    club['SimPct'] = cand.groupby('Team')['_sim'].mean()
 
-    if club.empty:
+    # Build club-level aggregates — use named agg so all columns stay aligned
+    club_agg = cand.groupby('Team').agg(
+        League  = ('League',  lambda x: x.mode().iloc[0]),
+        SimPct  = ('_sim',    'mean'),
+        AvgMV   = ('_mv',     'mean'),
+    ).reset_index()
+    club_agg['AvgMV']  = club_agg['AvgMV'].fillna(2_000_000)
+    club_agg['SimPct'] = club_agg['SimPct'].fillna(0)
+
+    if club_agg.empty:
         st.error("No clubs with complete data.")
         st.stop()
 
+    club_agg['LS'] = club_agg['League'].apply(_ls_lookup)
+    club_agg = club_agg[(club_agg['LS'] >= min_ls) & (club_agg['LS'] <= max_ls)].reset_index(drop=True)
+    if club_agg.empty:
+        st.error("No clubs after league filter.")
+        st.stop()
+
+    # Style scores
     has_team = not team_df.empty and 'Team' in team_df.columns
-    style_scores = np.full(len(club), 50.0)
+    style_scores = np.full(len(club_agg), 50.0)
 
     if has_team and sel_styles:
         tdf = team_df.drop_duplicates(subset=['Team']).set_index('Team')
         parts = []
 
         if "Similar to Current System" in sel_styles and tgt_team in tdf.index:
-            num_cols = [c for c in tdf.columns if tdf[c].dtype in [float, int] or
-                        pd.api.types.is_numeric_dtype(tdf[c])]
-            num_cols = [c for c in num_cols if c != 'Team']
+            num_cols = [c for c in tdf.columns
+                        if c != 'Team' and pd.api.types.is_numeric_dtype(tdf[c])]
             if num_cols:
                 tdf_num = tdf[num_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-                sc2 = StandardScaler().fit(tdf_num)
-                t_row = tdf_num.loc[tgt_team].values.reshape(1,-1)
-                t_std2 = sc2.transform(t_row)[0]
+                sc2     = StandardScaler().fit(tdf_num)
+                t_std2  = sc2.transform(tdf_num.loc[[tgt_team]])[0]
+                all_d   = np.linalg.norm(sc2.transform(tdf_num) - t_std2, axis=1)
+                rng     = float(all_d.max() - all_d.min()) or 1.0
                 part = []
-                for team_name in club['Team']:
+                for team_name in club_agg['Team']:
                     if team_name in tdf_num.index:
-                        c_row = tdf_num.loc[team_name].values.reshape(1,-1)
-                        c_std2 = sc2.transform(c_row)[0]
-                        d = float(np.linalg.norm(c_std2 - t_std2))
-                        all_d = np.linalg.norm(sc2.transform(tdf_num) - t_std2, axis=1)
-                        rng = float(all_d.max() - all_d.min()) or 1.0
+                        d = float(np.linalg.norm(sc2.transform(tdf_num.loc[[team_name]])[0] - t_std2))
                         part.append(float((1 - (d - all_d.min()) / rng) * 100))
                     else:
                         part.append(50.0)
                 parts.append(np.array(part))
 
         for sname in sel_styles:
-            if sname == "Similar to Current System": continue
-            blend = STYLE_BLENDS.get(sname, {})
+            if sname == "Similar to Current System":
+                continue
+            blend     = STYLE_BLENDS.get(sname, {})
             col_parts = []
             for col, direction in blend.items():
-                if col not in tdf.columns: continue
+                if col not in tdf.columns:
+                    continue
                 col_vals = pd.to_numeric(tdf[col], errors='coerce').dropna()
-                if col_vals.empty: continue
+                if col_vals.empty:
+                    continue
                 part = []
-                for team_name in club['Team']:
+                for team_name in club_agg['Team']:
                     if team_name in tdf.index:
                         v = pd.to_numeric(tdf.loc[team_name, col], errors='coerce')
-                        if pd.isna(v):
-                            part.append(50.0)
-                        else:
-                            pct = float((col_vals <= float(v)).mean() * 100)
-                            part.append(100 - pct if direction < 0 else pct)
+                        pct = float((col_vals <= float(v)).mean() * 100) if pd.notna(v) else 50.0
+                        part.append(100 - pct if direction < 0 else pct)
                     else:
                         part.append(50.0)
                 col_parts.append(np.array(part) * abs(direction))
@@ -427,43 +445,49 @@ with st.spinner("Computing…"):
             style_scores = np.mean(parts, axis=0)
 
     if sel_styles and has_team:
-        combined = (club['SimPct'].values * (1 - style_blend_w) +
-                    style_scores * style_blend_w)
+        combined = club_agg['SimPct'].values * (1 - style_blend_w) + style_scores * style_blend_w
     else:
-        combined = club['SimPct'].values.copy()
+        combined = club_agg['SimPct'].values.copy()
 
-    club['StyleFit'] = combined
+    club_agg['StyleFit'] = combined
 
-    club['LS'] = club['League'].map(LEAGUE_STRENGTHS).fillna(50.0)
-    club = club[(club['LS'] >= min_ls) & (club['LS'] <= max_ls)]
-    if club.empty:
-        st.error("No clubs after league filter.")
-        st.stop()
+    ratio    = (club_agg['LS'] / tgt_ls).clip(0.5, 1.2)
+    adj      = club_agg['StyleFit'] * (1 - league_weight) + club_agg['StyleFit'] * ratio * league_weight
+    gap      = (club_agg['LS'] - tgt_ls).clip(lower=0)
+    adj     *= (1 - gap / 100).clip(lower=0.7)
 
-    ratio = (club['LS'] / tgt_ls).clip(0.5, 1.2)
-    adj   = club['StyleFit'] * (1 - league_weight) + club['StyleFit'] * ratio * league_weight
-    gap   = (club['LS'] - tgt_ls).clip(lower=0)
-    adj  *= (1 - gap / 100).clip(lower=0.7)
-
-    tgt_mv = float(mv_override) if mv_override > 0 else float(pd.to_numeric(tgt.get('Market value', 0), errors='coerce') or 2_000_000)
-    tgt_mv = max(tgt_mv, 1.0)
-    mv_ratio = (club['AvgMV'] / tgt_mv).clip(0.5, 1.5)
+    tgt_mv   = float(mv_override) if mv_override > 0 else float(pd.to_numeric(tgt.get('Market value', 0), errors='coerce') or 2_000_000)
+    tgt_mv   = max(tgt_mv, 1.0)
+    mv_ratio = (club_agg['AvgMV'] / tgt_mv).clip(0.5, 1.5)
     mv_score = (1 - abs(1 - mv_ratio)) * 100
 
-    club['FinalFit'] = (adj * (1 - market_weight) + mv_score * market_weight).round(1)
+    club_agg['FinalFit'] = (adj * (1 - market_weight) + mv_score * market_weight).round(1)
 
-    results = club[['Team','League','LS','SimPct','FinalFit','AvgMV']]\
-        .sort_values('FinalFit', ascending=False)\
-        .reset_index(drop=True).head(int(top_n))
+    results = (
+        club_agg[['Team','League','LS','SimPct','FinalFit','AvgMV']]
+        .sort_values('FinalFit', ascending=False)
+        .reset_index(drop=True)
+        .head(int(top_n))
+    )
     results['FinalFit'] = results['FinalFit'].fillna(0).round(1)
     results['SimPct']   = results['SimPct'].fillna(0).round(1)
-    results.insert(0,'Rank', range(1, len(results)+1))
+    results['League']   = results['League'].fillna('Unknown')
+    results.insert(0, 'Rank', range(1, len(results) + 1))
 
 # ── DISPLAY ───────────────────────────────────────────────────────────
 st.markdown(f'<div class="sec">Top {int(top_n)} Club Fits — {sel_name}</div>', unsafe_allow_html=True)
 if sel_styles:
     st.markdown("Active styles: " + "".join(f'<span class="pill">{s}</span>' for s in sel_styles),
                 unsafe_allow_html=True)
+
+# Diagnostic: warn if scores look wrong
+_max_fit = results['FinalFit'].max()
+_max_sim = results['SimPct'].max()
+if _max_fit < 1:
+    st.warning(f"⚠️ Scores look wrong (max FinalFit={_max_fit:.2f}, max SimPct={_max_sim:.2f}). "
+               f"Check that your player CSV league names match the LEAGUE_STRENGTHS keys "
+               f"(e.g. 'England 1.' not 'Premier League'). "
+               f"Target league detected as: **{tgt_league}** → strength {tgt_ls:.0f}")
 
 # ── Badge fetching ────────────────────────────────────────────────────
 try:
@@ -647,16 +671,18 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         ax.text(0.42, y, str(i + 1), fontsize=11, fontweight="bold",
                 color=rank_color, ha="center", va="center", zorder=5)
 
-        # Club badge
+        # Club badge — fixed size, sits between rank circle and team name
         bdg = _badge(str(row['Team']))
+        BADGE_X = 1.06
         if bdg is not None:
             h, w2 = bdg.shape[:2]
-            zoom = 0.46 / max(h, w2) * DPI
-            ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=zoom),
-                          (1.02, y), frameon=False, zorder=5))
+            zoom = 38.0 / max(h, w2)
+            ax.add_artist(AnnotationBbox(
+                OffsetImage(bdg, zoom=zoom),
+                (BADGE_X, y), frameon=False, zorder=5, box_alignment=(0.5, 0.5)))
 
         # Team name & league
-        name_x = 1.42
+        name_x = 1.52
         ax.text(name_x, y + 0.20, str(row['Team']).upper(),
                 fontsize=12.5, fontweight="bold", color=TXT,
                 ha="left", va="center", zorder=5)
