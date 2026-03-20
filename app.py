@@ -646,10 +646,13 @@ with st.spinner("Computing club fits..."):
     w_vec = w_vec / (w_vec.sum() or 1.0)
 
     # Build full pool for percentile reference (target + all candidates)
-    full_pool_sim = pd.concat([
-        cand,
-        player_df[player_df['Player'] == selected_name]
-    ], ignore_index=True).drop_duplicates(subset=['Player','Team'])
+    # Reset index on cand first so it aligns cleanly with full_pool_sim
+    cand = cand.reset_index(drop=True)
+
+    target_in_pool = player_df[player_df['Player'] == selected_name].copy()
+    full_pool_sim = pd.concat([cand, target_in_pool], ignore_index=True)\
+                     .drop_duplicates(subset=['Player','Team'])\
+                     .reset_index(drop=True)
 
     # Per-league percentile rank for every player
     for f in avail_feats:
@@ -660,11 +663,9 @@ with st.spinner("Computing club fits..."):
     tgt_mask = (full_pool_sim['Player'] == selected_name)
     tgt_pct  = pct_df.loc[tgt_mask].mean(axis=0).values
 
-    # Club-level: group candidate players by team → mean percentile per team
-    cand_with_pct = cand[avail_feats].copy()
-    for f in avail_feats:
-        cand_with_pct[f] = pd.to_numeric(cand_with_pct[f], errors='coerce')
-    cand_pct = pct_df.loc[cand.index].values
+    # Candidate indices in full_pool_sim (first len(cand) rows)
+    cand_idx  = list(range(len(cand)))
+    cand_pct  = pct_df.loc[cand_idx].values
 
     # Weighted L1 percentile distance
     pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w_vec, axis=1)
@@ -672,14 +673,17 @@ with st.spinner("Computing club fits..."):
 
     # Z-score actual distance
     scaler_sim = StandardScaler()
+    cand_vals_raw = cand[avail_feats].apply(pd.to_numeric, errors='coerce').fillna(0)
+    tgt_vals_raw  = pd.to_numeric(
+        pd.Series(target_row[avail_feats].values, index=avail_feats),
+        errors='coerce').fillna(0).values.reshape(1, -1)
     all_vals = pd.concat([
-        pd.DataFrame(cand[avail_feats].values, columns=avail_feats),
-        pd.DataFrame(target_row[avail_feats].values.reshape(1,-1), columns=avail_feats)
-    ]).apply(pd.to_numeric, errors='coerce').fillna(0)
+        cand_vals_raw,
+        pd.DataFrame(tgt_vals_raw, columns=avail_feats)
+    ], ignore_index=True)
     scaler_sim.fit(all_vals)
-
-    cand_std = scaler_sim.transform(cand[avail_feats].apply(pd.to_numeric, errors='coerce').fillna(0))
-    tgt_std  = scaler_sim.transform(target_row[avail_feats].values.astype(float).reshape(1,-1))
+    cand_std = scaler_sim.transform(cand_vals_raw)
+    tgt_std  = scaler_sim.transform(tgt_vals_raw)
     act_dist = np.sum(np.abs(cand_std - tgt_std) * w_vec, axis=1)
     sim_act_arr = np.exp(-0.6 * act_dist) * 100.0
 
