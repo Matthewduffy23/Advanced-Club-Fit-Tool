@@ -230,9 +230,56 @@ with st.sidebar:
     st.markdown('<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:1.3rem;font-weight:800;color:#3b82f6;padding:10px 0 2px 0">🏟️ CLUB FIT</div>', unsafe_allow_html=True)
     st.markdown('<div style="color:#64748b;font-size:.76rem;margin-bottom:14px">Football Intelligence Platform</div>', unsafe_allow_html=True)
 
-    st.markdown("**Upload Data**")
-    player_files = st.file_uploader("Player CSVs", type="csv", accept_multiple_files=True)
-    team_file    = st.file_uploader("Team Stats CSV", type="csv")
+    st.markdown("**Data**")
+
+    import glob as _glob
+    from pathlib import Path as _Path
+
+    def _find_file(candidates, patterns=None):
+        """Find first existing file from candidates list, then fall back to glob patterns."""
+        for name in candidates:
+            p = _Path(name)
+            if p.exists():
+                return p
+        if patterns:
+            for pat in patterns:
+                found = sorted(_Path.cwd().glob(pat))
+                if found:
+                    return found[0]
+        return None
+
+    # ── Player CSV ─────────────────────────────────────────────────────
+    # Priority: exact repo filename → any WORLD*.csv in cwd
+    _auto_player_path = _find_file(
+        ["WORLDplayers_updated.csv"],
+        ["WORLD*.csv", "world*.csv"]
+    )
+
+    st.markdown("**Player CSV**")
+    if _auto_player_path:
+        st.caption(f"📂 Auto-loaded: `{_auto_player_path.name}`")
+        _override_p = st.file_uploader("Replace player CSV (optional)", type="csv",
+                                        accept_multiple_files=True, key="cf_player_upload")
+        player_files = list(_override_p) if _override_p else [open(str(_auto_player_path), "rb")]
+    else:
+        player_files = st.file_uploader("Player CSVs", type="csv",
+                                         accept_multiple_files=True, key="cf_player_upload")
+
+    # ── Team Stats CSV ─────────────────────────────────────────────────
+    # Priority: exact repo filename → any WORLD_team_stats*.csv in cwd
+    _auto_team_path = _find_file(
+        ["WORLD_team_stats_MAR26.csv"],
+        ["WORLD_team_stats*.csv", "world_team_stats*.csv"]
+    )
+
+    st.markdown("**Team Stats CSV**")
+    if _auto_team_path:
+        st.caption(f"📂 Auto-loaded: `{_auto_team_path.name}`")
+        _override_t = st.file_uploader("Replace team CSV (optional)", type="csv", key="cf_team_upload")
+        team_file = _override_t if _override_t else open(str(_auto_team_path), "rb")
+    else:
+        team_file = st.file_uploader("Team Stats CSV", type="csv", key="cf_team_upload")
+
     st.markdown("---")
     api_key = st.text_input("Anthropic API Key (AI Analysis)", type="password")
     st.markdown("---")
@@ -993,21 +1040,73 @@ else:
                 'Dribbles per 90','xA per 90'],
     }
 
-    def _player_role_score(player_row, pg_key):
-        metrics = ROLE_SCORE_WEIGHTS.get(pg_key, [])
-        scores  = [float(pd.to_numeric(player_row.get(m, np.nan), errors='coerce'))
-                   for m in metrics if pd.notna(pd.to_numeric(player_row.get(m, np.nan), errors='coerce'))]
-        return round(float(np.mean(scores)), 1) if scores else 0.0
+    # Complete Score weights (mirrors the shortlist tool)
+    COMPLETE_WEIGHTS_AI = {
+        'GK':  {'Save rate, %': 0.40, 'Accurate passes, %': 0.30, 'Accurate long passes, %': 0.30},
+        'CB':  {'Aerial duels won, %': 0.15, 'Defensive duels won, %': 0.15,
+                'Accurate passes, %': 0.10, 'Accurate forward passes, %': 0.10,
+                'Dribbles per 90': 0.05, 'Progressive runs per 90': 0.15,
+                'Progressive passes per 90': 0.15, 'PAdj Interceptions': 0.15},
+        'FB':  {'PAdj Interceptions': 0.10, 'Defensive duels won, %': 0.10,
+                'Accurate passes, %': 0.10, 'Defensive duels per 90': 0.05,
+                'Dribbles per 90': 0.10, 'Progressive runs per 90': 0.10,
+                'Progressive passes per 90': 0.10, 'Passes to final third per 90': 0.10,
+                'xA per 90': 0.10, 'Passes to penalty area per 90': 0.10,
+                'Smart passes per 90': 0.05},
+        'CM':  {'PAdj Interceptions': 0.10, 'Defensive duels won, %': 0.10,
+                'Accurate passes, %': 0.10, 'Defensive duels per 90': 0.05,
+                'Dribbles per 90': 0.10, 'Progressive runs per 90': 0.10,
+                'Progressive passes per 90': 0.10, 'Passes to final third per 90': 0.05,
+                'xA per 90': 0.10, 'Passes to penalty area per 90': 0.10,
+                'Non-penalty goals per 90': 0.05, 'xG per 90': 0.05},
+        'ATT': {'Accurate passes, %': 0.10, 'Dribbles per 90': 0.15,
+                'Progressive runs per 90': 0.10, 'Passes to final third per 90': 0.05,
+                'xA per 90': 0.20, 'Passes to penalty area per 90': 0.05,
+                'Non-penalty goals per 90': 0.15, 'xG per 90': 0.20},
+        'CF':  {'Accurate passes, %': 0.10, 'Dribbles per 90': 0.15,
+                'Progressive runs per 90': 0.10, 'xA per 90': 0.15,
+                'Passes to penalty area per 90': 0.05,
+                'Non-penalty goals per 90': 0.20, 'xG per 90': 0.25},
+    }
 
+    def _complete_score(player_row, pg_key, ref_pool):
+        """Compute Complete Score as percentile-weighted average vs ref_pool."""
+        weights = COMPLETE_WEIGHTS_AI.get(pg_key, {})
+        if not weights or ref_pool.empty:
+            return 0.0
+        vals, wts = [], []
+        for met, w in weights.items():
+            if met not in ref_pool.columns:
+                continue
+            v = pd.to_numeric(player_row.get(met, np.nan), errors='coerce')
+            if pd.isna(v):
+                continue
+            col_vals = pd.to_numeric(ref_pool[met], errors='coerce').dropna()
+            if col_vals.empty:
+                continue
+            pct = float((col_vals <= v).mean() * 100)
+            vals.append(pct)
+            wts.append(float(w))
+        if not vals or sum(wts) == 0:
+            return 0.0
+        return round(float(np.average(vals, weights=wts)), 1)
 
     def _squad_depth_html(squad, pg_key):
-        """Build styled HTML player cards + plain text for AI prompt."""
+        """Build styled HTML player cards + plain text for AI prompt using Complete Score."""
         pos_players = squad[squad['_pg'] == pg_key].copy()
         if pos_players.empty:
             return "", f"No {pg_key}s in dataset."
         pos_players = pos_players.sort_values('Minutes played', ascending=False)
         cc = next((c for c in squad.columns if 'contract' in c.lower()), None)
         import re as _rec
+
+        # Reference pool = all players of same position in same league
+        dest_lg   = squad['League'].iloc[0] if not squad.empty else ''
+        ref_pool  = player_df[
+            (player_df['League'].astype(str) == str(dest_lg)) &
+            (player_df.get('_pg', pd.Series(dtype=str)) == pg_key)
+        ].copy() if '_pg' in player_df.columns else pd.DataFrame()
+
         html_rows, text_rows = [], []
         for _, p in pos_players.head(6).iterrows():
             name    = str(p.get('Player', '?'))
@@ -1016,7 +1115,7 @@ else:
             goals   = int(pd.to_numeric(p.get('Goals', 0), errors='coerce') or 0)
             mv      = fmt_mv(p.get('Market value', 0))
             age     = int(p.get('Age', 0) or 0)
-            rscore  = _player_role_score(p, pg_key)
+            cscore  = _complete_score(p, pg_key, ref_pool)
             # Contract colour
             contract_raw = str(p.get(cc, '')) if cc else ''
             cy_m = _rec.search(r'(\d{4})', contract_raw)
@@ -1025,8 +1124,8 @@ else:
             if cy <= 2026:   cc_col = '#ef4444'
             elif cy <= 2027: cc_col = '#f59e0b'
             else:            cc_col = '#64748b'
-            # Role score colour
-            rs_col = '#22c55e' if rscore >= 0.6 else ('#f59e0b' if rscore >= 0.35 else '#ef4444')
+            # Complete score colour
+            cs_col = '#22c55e' if cscore >= 65 else ('#f59e0b' if cscore >= 45 else '#ef4444')
             html_rows.append(
                 f'<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;'
                 f'background:#0f172a;border:1px solid #1e2d42;border-radius:7px;margin-bottom:4px;flex-wrap:wrap;">'
@@ -1034,13 +1133,42 @@ else:
                 f'<span style="color:#64748b;font-size:.78rem;">Age {age}</span>'
                 f'<span style="background:#1e2d42;color:#cbd5e1;padding:2px 6px;border-radius:4px;font-size:.78rem;">{matches} apps · {mins}min</span>'
                 f'<span style="background:#052e16;color:#22c55e;padding:2px 6px;border-radius:4px;font-size:.78rem;font-weight:700;">{goals}G</span>'
-                f'<span style="background:{rs_col}18;color:{rs_col};border:1px solid {rs_col}44;padding:2px 6px;border-radius:4px;font-size:.78rem;font-weight:700;">Score {rscore:.2f}</span>'
+                f'<span style="background:{cs_col}18;color:{cs_col};border:1px solid {cs_col}44;padding:2px 6px;border-radius:4px;font-size:.78rem;font-weight:700;">Complete {cscore:.0f}</span>'
                 f'<span style="color:#64748b;font-size:.78rem;">{mv}</span>'
                 f'<span style="background:{cc_col}18;color:{cc_col};border:1px solid {cc_col}44;padding:2px 6px;border-radius:4px;font-size:.76rem;margin-left:auto;">📄 {contract_txt}</span>'
                 f'</div>'
             )
-            text_rows.append(f"{name} (Age {age}, {matches} apps, {mins}min, {goals}G, Score {rscore:.2f}, MV {mv}, Contract {contract_txt})")
+            text_rows.append(f"{name} (Age {age}, {matches} apps, {mins}min, {goals}G, Complete Score {cscore:.0f}/100, MV {mv}, Contract {contract_txt})")
         return "".join(html_rows), "\n".join(text_rows)
+
+    def _team_style_data(ai_team, dest_league):
+        """Pull key team metrics and compute percentile vs league from team_df."""
+        if team_df.empty or 'Team' not in team_df.columns:
+            return ""
+        team_row = team_df[team_df['Team'] == ai_team]
+        if team_row.empty:
+            return ""
+        row = team_row.iloc[0]
+        league_teams = team_df[team_df['League'].astype(str) == str(dest_league)] if 'League' in team_df.columns else team_df
+
+        STYLE_METRICS = [
+            'PPDA', 'Passes per 90', 'Progressive passes per 90', 'xG per 90',
+            'Crosses per 90', 'Deep completions per 90', 'Touches in box per 90',
+            'xG Against p90', 'Goals Against p90', 'Defensive duels per 90',
+        ]
+        lines = []
+        for met in STYLE_METRICS:
+            if met not in team_df.columns:
+                continue
+            v = pd.to_numeric(row.get(met, np.nan), errors='coerce')
+            if pd.isna(v):
+                continue
+            col_vals = pd.to_numeric(league_teams[met], errors='coerce').dropna()
+            if col_vals.empty:
+                continue
+            pct = int((col_vals <= v).mean() * 100)
+            lines.append(f"  {met}: {v:.2f} (P{pct} in {dest_league})")
+        return "\n".join(lines) if lines else "No team metric data available."
 
     def run_ai_analysis(ai_team, fit_pct, sim_pct, ls_val, avg_mv):
         squad = player_df[player_df['Team'] == ai_team].copy()
@@ -1065,26 +1193,30 @@ else:
         tgt_mv_val   = float(pd.to_numeric(_tgt.get('Market value', 0), errors='coerce') or 0)
         league_gap   = abs(ls_val - _ls_lookup(_tgt_league))
         dest_league  = squad['League'].iloc[0] if not squad.empty else '?'
+        team_style_metrics = _team_style_data(ai_team, dest_league)
 
         prompt = f"""You are a senior football recruitment analyst writing a structured scouting report.
 
 TARGET: {sel_name} | {_pg} | {_tgt_league} | Age {_tgt.get('Age','?')} | MV {fmt_mv(_tgt.get('Market value'))}
 CLUB: {ai_team} | {dest_league} | Strength {ls_val:.0f}/100 | Fit {fit_pct:.0f}% | Similarity {sim_pct:.0f}% | Squad avg MV {fmt_mv(avg_mv)}
 
-{_pg} PLAYERS AT {ai_team} (sorted by minutes):
+{_pg} PLAYERS AT {ai_team} (sorted by minutes, Complete Score = percentile vs league peers):
 {depth_text}
 
 SQUAD: Avg age {avg_age} | U23: {u23} | Over 28: {o28} | {pos_count}
 Top value players: {high_val_str}
 League gap vs {_tgt_league}: {league_gap:.0f} pts
 
+TEAM METRICS vs {dest_league} (percentile rank in brackets):
+{team_style_metrics}
+
 Write EXACTLY 4 sections. Plain text only, no markdown, no bold, no asterisks. Header in CAPS followed by colon.
 
-SQUAD DEPTH: 1-2 sentences. Is there a vacancy or competition at {_pg}? Reference role scores and contract situations — do NOT list all players again, just summarise what they mean.
+SQUAD DEPTH: 1-2 sentences. Is there a vacancy or competition at {_pg}? Reference the Complete Scores and contract situations — do NOT list all players again, just summarise what they mean.
 
-BREAKDOWN: 2-3 sentences. The {sim_pct:.0f}% similarity score means there are players here with comparable statistical profiles to {sel_name} — name the key metrics that drove the match (e.g. similar xG output, dribbling rate, passing volume). Note where they differ and what the {ls_val:.0f}/100 league strength means for this ranking.
+BREAKDOWN: 2-3 sentences. The {sim_pct:.0f}% similarity score means there are players here with comparable statistical profiles to {sel_name} — name the key metrics that drove the match. Note where they differ and what the {ls_val:.0f}/100 league strength means for this ranking.
 
-STYLE: 2 sentences max. First: {ai_team}'s tactical identity in {dest_league} in plain terms (pressing, possession, direct, transition). Second: one sentence on whether that suits {sel_name} as a {_pg}.
+STYLE: 2 sentences max. Use the team metrics above — reference 2-3 specific percentile rankings (e.g. "top 20% for PPDA in {dest_league}, bottom 30% for crosses") to describe {ai_team}'s actual style. Then one sentence on whether that suits {sel_name}'s strengths as a {_pg}.
 
 FIT VERDICT: SIGN / MONITOR / PASS. 2 sentences. League gap {league_gap:.0f} pts, MV {fmt_mv(tgt_mv_val)} vs squad avg {fmt_mv(avg_mv)} — is the price realistic and is this step up / lateral / step down?
 
