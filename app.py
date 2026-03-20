@@ -1024,12 +1024,12 @@ SQUAD DATA:
 - Highest value players: {high_val_str}
 - {expiring}
 
-Write exactly 4 sections, one sentence each. Be specific, use player names, no filler:
+Respond with EXACTLY these 4 headers, each followed by one sentence. No markdown, no bold, no extra text:
 
-SQUAD DEPTH: Is there a vacancy or competition at {_pg}? Name the current incumbent if clear.
-AGE PROFILE: What does the squad's age shape mean for signing {sel_name} now vs waiting?
-DEPARTURE RISK: Which high-value player is most likely to leave, opening a spot or budget?
-FIT VERDICT: SIGN / MONITOR / PASS with one decisive reason tied to the {fit_pct}% fit score."""
+SQUAD DEPTH: [one sentence about vacancy or competition at {_pg}]
+AGE PROFILE: [one sentence about squad age and timing for signing {sel_name}]
+DEPARTURE RISK: [one sentence about which high-value player may leave]
+FIT VERDICT: [SIGN / MONITOR / PASS with one reason tied to the {fit_pct}% fit score]"""
 
         resp = client_ai.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=500,
@@ -1037,23 +1037,36 @@ FIT VERDICT: SIGN / MONITOR / PASS with one decisive reason tied to the {fit_pct
         return resp.content[0].text.strip()
 
     def parse_and_render(text, ai_team):
+        import re as _re
         sections = {}
+        # Strip markdown bold, clean up
+        clean = _re.sub(r'\*+', '', text)
         cur_key, cur_lines = None, []
-        for line in text.split('\n'):
+        for line in clean.split('\n'):
             line = line.strip()
-            if not line: continue
+            if not line:
+                continue
+            # Match any of the 4 keys case-insensitively, with optional colon/dash after
             matched = False
-            for k in ["SQUAD DEPTH","AGE PROFILE","DEPARTURE RISK","FIT VERDICT"]:
-                if line.upper().startswith(k):
-                    if cur_key: sections[cur_key] = " ".join(cur_lines)
+            for k in ["SQUAD DEPTH", "AGE PROFILE", "DEPARTURE RISK", "FIT VERDICT"]:
+                if _re.match(rf'^{k}[\s:.\-–]*', line, _re.IGNORECASE):
+                    if cur_key:
+                        sections[cur_key] = " ".join(cur_lines).strip()
                     cur_key = k
-                    rest = line[len(k):].lstrip(':').strip()
+                    rest = _re.sub(rf'^{k}[\s:.\-–]*', '', line, flags=_re.IGNORECASE).strip()
                     cur_lines = [rest] if rest else []
                     matched = True
                     break
             if not matched and cur_key:
                 cur_lines.append(line)
-        if cur_key: sections[cur_key] = " ".join(cur_lines)
+        if cur_key:
+            sections[cur_key] = " ".join(cur_lines).strip()
+
+        # Fallback: if parsing failed entirely, show raw text
+        if not any(sections.values()):
+            st.markdown(f"### {ai_team} — Squad Intelligence")
+            st.write(text)
+            return
 
         icons  = {"SQUAD DEPTH":"👥","AGE PROFILE":"📊","DEPARTURE RISK":"⚠️","FIT VERDICT":"✅"}
         colors = {"SQUAD DEPTH":"#3b82f6","AGE PROFILE":"#8b5cf6",
