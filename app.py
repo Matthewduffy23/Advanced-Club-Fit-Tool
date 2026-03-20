@@ -491,247 +491,211 @@ with st.expander("⚙️ Advanced Settings", expanded=False):
 
 # ── RUN ───────────────────────────────────────────────────────────────
 run = st.button("🔍  Find Club Fits", type="primary", use_container_width=True)
-if not run:
-    st.stop()
 
 # ── COMPUTE ───────────────────────────────────────────────────────────
-with st.spinner("Computing…"):
+if run:
+    with st.spinner("Computing…"):
 
-    cand = player_df.copy()
-    if cand_leagues:
-        cand = cand[cand['League'].isin(cand_leagues)]
-    if '_pg' in cand.columns:
-        cand = cand[cand['_pg'] == pg]
-    cand = cand[cand['Minutes played'].fillna(0) >= min_mins]
-    cand = cand[cand['Age'].fillna(99)            <= max_age]
-    cand = cand.dropna(subset=feats).reset_index(drop=True)
+        cand = player_df.copy()
+        if cand_leagues:
+            cand = cand[cand['League'].isin(cand_leagues)]
+        # Exclude the player's own current club from candidate results
+        cand = cand[cand['Team'] != tgt_team]
+        if '_pg' in cand.columns:
+            cand = cand[cand['_pg'] == pg]
+        cand = cand[cand['Minutes played'].fillna(0) >= min_mins]
+        cand = cand[cand['Age'].fillna(99)            <= max_age]
+        cand = cand.dropna(subset=feats).reset_index(drop=True)
 
-    if cand.empty:
-        st.error("No candidates after filters.")
-        st.stop()
+        if cand.empty:
+            st.error("No candidates after filters.")
+            st.stop()
 
-    for f in feats:
-        cand[f] = pd.to_numeric(cand[f], errors='coerce').fillna(0)
-    tgt_vec = np.array([pd.to_numeric(tgt.get(f, 0), errors='coerce') or 0 for f in feats], dtype=float)
+        for f in feats:
+            cand[f] = pd.to_numeric(cand[f], errors='coerce').fillna(0)
+        tgt_vec = np.array([pd.to_numeric(tgt.get(f, 0), errors='coerce') or 0 for f in feats], dtype=float)
 
-    w = np.array([custom_w.get(f, 1) for f in feats], dtype=float)
-    w = w / (w.sum() or 1.0)
+        w = np.array([custom_w.get(f, 1) for f in feats], dtype=float)
+        w = w / (w.sum() or 1.0)
 
-    tgt_df = player_df[player_df['Player'] == sel_name].copy()
-    for f in feats:
-        tgt_df[f] = pd.to_numeric(tgt_df[f], errors='coerce').fillna(0)
+        tgt_df = player_df[player_df['Player'] == sel_name].copy()
+        for f in feats:
+            tgt_df[f] = pd.to_numeric(tgt_df[f], errors='coerce').fillna(0)
 
-    # ── Percentile similarity (within-league) ─────────────────────────
-    ref = pd.concat([cand[feats + ['League']], tgt_df[feats + ['League']].head(1)],
-                    ignore_index=True)
-    pct_mat = ref.groupby('League')[feats].rank(pct=True).fillna(0.5)
+        # ── Percentile similarity (within-league) ─────────────────────
+        ref = pd.concat([cand[feats + ['League']], tgt_df[feats + ['League']].head(1)],
+                        ignore_index=True)
+        pct_mat = ref.groupby('League')[feats].rank(pct=True).fillna(0.5)
 
-    n_cand   = len(cand)
-    tgt_pct  = pct_mat.iloc[n_cand:].mean(axis=0).values
-    cand_pct = pct_mat.iloc[:n_cand].values
+        n_cand   = len(cand)
+        tgt_pct  = pct_mat.iloc[n_cand:].mean(axis=0).values
+        cand_pct = pct_mat.iloc[:n_cand].values
 
-    pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w, axis=1)
-    sim_pct  = np.exp(-2.8 * pct_dist) * 100.0
+        pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w, axis=1)
+        sim_pct  = np.exp(-2.8 * pct_dist) * 100.0
 
-    # ── Z-score similarity (within-league) ────────────────────────────
-    # Fit a separate StandardScaler per league so a Belgian CF is only
-    # z-scored against other Belgian CFs, not the global pool.
-    # The target player is included in their own league's scaler.
-    tgt_league_label = str(tgt.get('League', ''))
-    act_dist = np.zeros(n_cand)
+        # ── Z-score similarity (within-league) ────────────────────────
+        tgt_league_label = str(tgt.get('League', ''))
+        act_dist = np.zeros(n_cand)
 
-    all_leagues = cand['League'].unique().tolist()
-    if tgt_league_label not in all_leagues:
-        all_leagues = [tgt_league_label] + all_leagues
+        all_leagues = cand['League'].unique().tolist()
+        if tgt_league_label not in all_leagues:
+            all_leagues = [tgt_league_label] + all_leagues
 
-    for lg in all_leagues:
-        cand_mask = cand['League'] == lg
-        cand_idx  = np.where(cand_mask)[0]
-        if len(cand_idx) == 0:
-            continue
-
-        lg_cand = cand.loc[cand_mask, feats].values
-
-        if lg == tgt_league_label:
-            # Include target in this league's scaler so they're on the same scale
-            lg_all = np.vstack([lg_cand, tgt_vec.reshape(1, -1)])
-        else:
-            lg_all = lg_cand
-
-        if lg_all.shape[0] < 2:
-            # Only one player in this league — can't fit a scaler meaningfully,
-            # fall back to global scale for these candidates
-            global_sc = StandardScaler().fit(
-                np.vstack([cand[feats].values, tgt_vec.reshape(1, -1)]))
-            c_std_lg = global_sc.transform(lg_cand)
-            t_std_lg = global_sc.transform(tgt_vec.reshape(1, -1))
-        else:
-            lg_sc    = StandardScaler().fit(lg_all)
-            c_std_lg = lg_sc.transform(lg_cand)
-            t_std_lg = lg_sc.transform(tgt_vec.reshape(1, -1))
-
-        act_dist[cand_idx] = np.sum(np.abs(c_std_lg - t_std_lg) * w, axis=1)
-
-    sim_act = np.exp(-0.6 * act_dist) * 100.0
-    cand['_sim'] = sim_pct * 0.5 + sim_act * 0.5
-
-    # Market value on cand before groupby
-    if 'Market value' in cand.columns:
-        mv_series = pd.to_numeric(cand['Market value'], errors='coerce')
-        median_mv = float(mv_series.median() or 2_000_000)
-        cand['_mv'] = mv_series.fillna(median_mv)
-    else:
-        cand['_mv'] = 2_000_000
-
-    # Build club-level aggregates — use named agg so all columns stay aligned
-    club_agg = cand.groupby('Team').agg(
-        League  = ('League',  lambda x: x.mode().iloc[0]),
-        SimPct  = ('_sim',    'mean'),
-        AvgMV   = ('_mv',     'mean'),
-    ).reset_index()
-    club_agg['AvgMV']  = club_agg['AvgMV'].fillna(2_000_000)
-    club_agg['SimPct'] = club_agg['SimPct'].fillna(0)
-
-    if club_agg.empty:
-        st.error("No clubs with complete data.")
-        st.stop()
-
-    club_agg['LS'] = club_agg['League'].apply(_ls_lookup)
-    club_agg = club_agg[(club_agg['LS'] >= min_ls) & (club_agg['LS'] <= max_ls)].reset_index(drop=True)
-    if club_agg.empty:
-        st.error("No clubs after league filter.")
-        st.stop()
-
-    # Style scores
-    has_team = not team_df.empty and 'Team' in team_df.columns
-    style_scores = np.full(len(club_agg), 50.0)
-
-    if has_team and sel_styles:
-        tdf = team_df.drop_duplicates(subset=['Team']).set_index('Team')
-
-        # Build a league lookup for teams so style percentiles are within-league
-        team_league_lookup = {}
-        if 'League' in team_df.columns:
-            team_league_lookup = team_df.drop_duplicates(subset=['Team'])\
-                                        .set_index('Team')['League'].to_dict()
-
-        parts = []
-
-        if "Similar to Current System" in sel_styles and tgt_team in tdf.index:
-            num_cols = [c for c in tdf.columns
-                        if c != 'Team' and pd.api.types.is_numeric_dtype(tdf[c])]
-            if num_cols:
-                tdf_num = tdf[num_cols].apply(pd.to_numeric, errors='coerce')
-                tdf_num = tdf_num.fillna(tdf_num.mean())
-                sc2    = StandardScaler().fit(tdf_num)
-                t_std2 = sc2.transform(tdf_num.loc[[tgt_team]])[0]
-                all_d  = np.linalg.norm(sc2.transform(tdf_num) - t_std2, axis=1)
-                rng    = float(all_d.max() - all_d.min()) or 1.0
-                part   = []
-                for team_name in club_agg['Team']:
-                    if team_name in tdf_num.index:
-                        d = float(np.linalg.norm(
-                            sc2.transform(tdf_num.loc[[team_name]])[0] - t_std2))
-                        part.append(float((1 - (d - all_d.min()) / rng) * 100))
-                    else:
-                        part.append(50.0)
-                parts.append(np.array(part))
-
-        for sname in sel_styles:
-            if sname == "Similar to Current System":
+        for lg in all_leagues:
+            cand_mask = cand['League'] == lg
+            cand_idx  = np.where(cand_mask)[0]
+            if len(cand_idx) == 0:
                 continue
-            blend      = STYLE_BLENDS.get(sname, {})
-            col_parts  = []
-            style_pass = np.ones(len(club_agg), dtype=bool)
+            lg_cand = cand.loc[cand_mask, feats].values
+            if lg == tgt_league_label:
+                lg_all = np.vstack([lg_cand, tgt_vec.reshape(1, -1)])
+            else:
+                lg_all = lg_cand
+            if lg_all.shape[0] < 2:
+                global_sc = StandardScaler().fit(np.vstack([cand[feats].values, tgt_vec.reshape(1, -1)]))
+                c_std_lg  = global_sc.transform(lg_cand)
+                t_std_lg  = global_sc.transform(tgt_vec.reshape(1, -1))
+            else:
+                lg_sc    = StandardScaler().fit(lg_all)
+                c_std_lg = lg_sc.transform(lg_cand)
+                t_std_lg = lg_sc.transform(tgt_vec.reshape(1, -1))
+            act_dist[cand_idx] = np.sum(np.abs(c_std_lg - t_std_lg) * w, axis=1)
 
-            for col, direction in blend.items():
-                if col not in tdf.columns:
+        sim_act = np.exp(-0.6 * act_dist) * 100.0
+        cand['_sim'] = sim_pct * 0.5 + sim_act * 0.5
+
+        if 'Market value' in cand.columns:
+            mv_series = pd.to_numeric(cand['Market value'], errors='coerce')
+            median_mv = float(mv_series.median() or 2_000_000)
+            cand['_mv'] = mv_series.fillna(median_mv)
+        else:
+            cand['_mv'] = 2_000_000
+
+        club_agg = cand.groupby('Team').agg(
+            League  = ('League', lambda x: x.mode().iloc[0]),
+            SimPct  = ('_sim',   'mean'),
+            AvgMV   = ('_mv',    'mean'),
+        ).reset_index()
+        club_agg['AvgMV']  = club_agg['AvgMV'].fillna(2_000_000)
+        club_agg['SimPct'] = club_agg['SimPct'].fillna(0)
+
+        if club_agg.empty:
+            st.error("No clubs with complete data.")
+            st.stop()
+
+        club_agg['LS'] = club_agg['League'].apply(_ls_lookup)
+        club_agg = club_agg[(club_agg['LS'] >= min_ls) & (club_agg['LS'] <= max_ls)].reset_index(drop=True)
+        if club_agg.empty:
+            st.error("No clubs after league filter.")
+            st.stop()
+
+        has_team    = not team_df.empty and 'Team' in team_df.columns
+        style_scores = np.full(len(club_agg), 50.0)
+
+        if has_team and sel_styles:
+            tdf = team_df.drop_duplicates(subset=['Team']).set_index('Team')
+            team_league_lookup = {}
+            if 'League' in team_df.columns:
+                team_league_lookup = team_df.drop_duplicates(subset=['Team'])\
+                                            .set_index('Team')['League'].to_dict()
+            parts = []
+
+            if "Similar to Current System" in sel_styles and tgt_team in tdf.index:
+                num_cols = [c for c in tdf.columns if c != 'Team' and pd.api.types.is_numeric_dtype(tdf[c])]
+                if num_cols:
+                    tdf_num = tdf[num_cols].apply(pd.to_numeric, errors='coerce')
+                    tdf_num = tdf_num.fillna(tdf_num.mean())
+                    sc2    = StandardScaler().fit(tdf_num)
+                    t_std2 = sc2.transform(tdf_num.loc[[tgt_team]])[0]
+                    all_d  = np.linalg.norm(sc2.transform(tdf_num) - t_std2, axis=1)
+                    rng    = float(all_d.max() - all_d.min()) or 1.0
+                    part   = []
+                    for team_name in club_agg['Team']:
+                        if team_name in tdf_num.index:
+                            d = float(np.linalg.norm(sc2.transform(tdf_num.loc[[team_name]])[0] - t_std2))
+                            part.append(float((1 - (d - all_d.min()) / rng) * 100))
+                        else:
+                            part.append(50.0)
+                    parts.append(np.array(part))
+
+            for sname in sel_styles:
+                if sname == "Similar to Current System":
                     continue
-                part = []
-                for j, team_name in enumerate(club_agg['Team']):
-                    if team_name not in tdf.index:
-                        part.append(50.0)
+                blend      = STYLE_BLENDS.get(sname, {})
+                col_parts  = []
+                style_pass = np.ones(len(club_agg), dtype=bool)
+                for col, direction in blend.items():
+                    if col not in tdf.columns:
                         continue
+                    part = []
+                    for j, team_name in enumerate(club_agg['Team']):
+                        if team_name not in tdf.index:
+                            part.append(50.0); continue
+                        v = pd.to_numeric(tdf.loc[team_name, col], errors='coerce')
+                        if pd.isna(v):
+                            part.append(50.0); continue
+                        club_lg = team_league_lookup.get(team_name, None)
+                        if club_lg and 'League' in team_df.columns:
+                            lg_teams = team_df[team_df['League'] == club_lg]['Team'].tolist()
+                            col_vals = pd.to_numeric(tdf.loc[tdf.index.isin(lg_teams), col], errors='coerce').dropna()
+                        else:
+                            col_vals = pd.to_numeric(tdf[col], errors='coerce').dropna()
+                        if col_vals.empty:
+                            part.append(50.0); continue
+                        pct          = float((col_vals <= float(v)).mean() * 100)
+                        effective_pct = (100 - pct) if direction < 0 else pct
+                        if effective_pct < 60.0:
+                            style_pass[j] = False
+                        part.append(effective_pct)
+                    col_parts.append(np.array(part) * abs(direction))
+                if col_parts:
+                    style_arr = np.mean(col_parts, axis=0)
+                    style_arr[~style_pass] = 0.0
+                    parts.append(style_arr)
 
-                    v = pd.to_numeric(tdf.loc[team_name, col], errors='coerce')
-                    if pd.isna(v):
-                        part.append(50.0)
-                        continue
+            if parts:
+                style_scores = np.mean(parts, axis=0)
 
-                    # ── Within-league percentile ──────────────────────
-                    # Get the league for this club and compare only against
-                    # teams in the same league
-                    club_lg = team_league_lookup.get(team_name, None)
-                    if club_lg and 'League' in team_df.columns:
-                        lg_teams = team_df[team_df['League'] == club_lg]['Team'].tolist()
-                        col_vals = pd.to_numeric(
-                            tdf.loc[tdf.index.isin(lg_teams), col],
-                            errors='coerce').dropna()
-                    else:
-                        # No league info — fall back to global
-                        col_vals = pd.to_numeric(tdf[col], errors='coerce').dropna()
+        if sel_styles and has_team:
+            combined = club_agg['SimPct'].values * (1 - style_blend_w) + style_scores * style_blend_w
+        else:
+            combined = club_agg['SimPct'].values.copy()
 
-                    if col_vals.empty:
-                        part.append(50.0)
-                        continue
+        club_agg['StyleFit'] = combined
+        ratio    = (club_agg['LS'] / tgt_ls).clip(0.5, 1.2)
+        adj      = club_agg['StyleFit'] * (1 - league_weight) + club_agg['StyleFit'] * ratio * league_weight
+        gap      = (club_agg['LS'] - tgt_ls).clip(lower=0)
+        adj     *= (1 - gap / 100).clip(lower=0.7)
 
-                    pct = float((col_vals <= float(v)).mean() * 100)
-                    effective_pct = (100 - pct) if direction < 0 else pct
-                    if effective_pct < 60.0:
-                        style_pass[j] = False
-                    part.append(effective_pct)
+        tgt_mv   = float(mv_override) if mv_override > 0 else float(pd.to_numeric(tgt.get('Market value', 0), errors='coerce') or 2_000_000)
+        tgt_mv   = max(tgt_mv, 1.0)
+        mv_ratio = (club_agg['AvgMV'] / tgt_mv).clip(0.5, 1.5)
+        mv_score = (1 - abs(1 - mv_ratio)) * 100
 
-                col_parts.append(np.array(part) * abs(direction))
+        club_agg['FinalFit'] = (adj * (1 - market_weight) + mv_score * market_weight).round(1)
 
-            if col_parts:
-                style_arr          = np.mean(col_parts, axis=0)
-                style_arr[~style_pass] = 0.0
-                parts.append(style_arr)
+        results = (
+            club_agg[['Team','League','LS','SimPct','FinalFit','AvgMV']]
+            .sort_values('FinalFit', ascending=False)
+            .reset_index(drop=True)
+            .head(int(top_n))
+        )
+        results['FinalFit'] = results['FinalFit'].fillna(0).round(1)
+        results['SimPct']   = results['SimPct'].fillna(0).round(1)
+        results['League']   = results['League'].fillna('Unknown')
+        results.insert(0, 'Rank', range(1, len(results) + 1))
 
-        if parts:
-            style_scores = np.mean(parts, axis=0)
+        st.session_state['cf_results']    = results
+        st.session_state['cf_sel_name']   = sel_name
+        st.session_state['cf_sel_styles'] = sel_styles
+        st.session_state['cf_img_params'] = dict(
+            pg=pg, tgt_league=tgt_league, tgt_ls=tgt_ls,
+            league_weight=league_weight, market_weight=market_weight,
+            min_mins=min_mins, top_n=int(top_n), sel_styles=sel_styles,
+        )
 
-    if sel_styles and has_team:
-        combined = club_agg['SimPct'].values * (1 - style_blend_w) + style_scores * style_blend_w
-    else:
-        combined = club_agg['SimPct'].values.copy()
-
-    club_agg['StyleFit'] = combined
-
-    ratio    = (club_agg['LS'] / tgt_ls).clip(0.5, 1.2)
-    adj      = club_agg['StyleFit'] * (1 - league_weight) + club_agg['StyleFit'] * ratio * league_weight
-    gap      = (club_agg['LS'] - tgt_ls).clip(lower=0)
-    adj     *= (1 - gap / 100).clip(lower=0.7)
-
-    tgt_mv   = float(mv_override) if mv_override > 0 else float(pd.to_numeric(tgt.get('Market value', 0), errors='coerce') or 2_000_000)
-    tgt_mv   = max(tgt_mv, 1.0)
-    mv_ratio = (club_agg['AvgMV'] / tgt_mv).clip(0.5, 1.5)
-    mv_score = (1 - abs(1 - mv_ratio)) * 100
-
-    club_agg['FinalFit'] = (adj * (1 - market_weight) + mv_score * market_weight).round(1)
-
-    results = (
-        club_agg[['Team','League','LS','SimPct','FinalFit','AvgMV']]
-        .sort_values('FinalFit', ascending=False)
-        .reset_index(drop=True)
-        .head(int(top_n))
-    )
-    results['FinalFit'] = results['FinalFit'].fillna(0).round(1)
-    results['SimPct']   = results['SimPct'].fillna(0).round(1)
-    results['League']   = results['League'].fillna('Unknown')
-    results.insert(0, 'Rank', range(1, len(results) + 1))
-
-    # Persist results and context so download button reruns don't wipe them
-    st.session_state['cf_results']     = results
-    st.session_state['cf_sel_name']    = sel_name
-    st.session_state['cf_sel_styles']  = sel_styles
-    st.session_state['cf_img_params']  = dict(
-        pg=pg, tgt_league=tgt_league, tgt_ls=tgt_ls,
-        league_weight=league_weight, market_weight=market_weight,
-        min_mins=min_mins, top_n=int(top_n), sel_styles=sel_styles,
-    )
-
-# ── Restore from session state if rerun without compute ──────────────
+# ── Restore from session state — always reached on every rerun ───────
 if 'cf_results' not in st.session_state:
     st.stop()
 
@@ -874,11 +838,10 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     ax.text(0.04, title_y,       "CLUB FIT FINDER",   fontsize=19, fontweight="bold", color=TXT, ha="left", va="top")
     ax.text(0.04, title_y-0.34,  player_name.upper(), fontsize=14, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
 
-    # Subtitle — all parts treated equally, separated by  ·
+    # Subtitle — Role and League only
     subtitle_parts = []
-    if pg:          subtitle_parts.append(f"Role: {pg}")
-    if tgt_league:  subtitle_parts.append(f"League: {tgt_league}")
-    if style_str:   subtitle_parts.append(f"Style-Role Similarity: {style_str}")
+    if pg:         subtitle_parts.append(f"Role: {pg}")
+    if tgt_league: subtitle_parts.append(f"League: {tgt_league}")
     subtitle_line = "  ·  ".join(subtitle_parts)
     if subtitle_line:
         ax.text(0.04, title_y-0.62, subtitle_line, fontsize=9, color=SUB, ha="left", va="top")
