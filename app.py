@@ -260,7 +260,8 @@ with st.sidebar:
     # Regions
     _all_regions = sorted({_league_region(lg) for lg in _all_lgs}) if _all_lgs else []
     sel_regions  = st.multiselect("Regions", _all_regions, default=_all_regions, key="cf_regions")
-    _region_lgs  = [lg for lg in _all_lgs if _league_region(lg) in sel_regions]
+    # Fall back to all leagues if user clears regions
+    _region_lgs  = [lg for lg in _all_lgs if _league_region(lg) in sel_regions] or _all_lgs
 
     # Presets
     st.markdown("##### League Presets")
@@ -269,10 +270,7 @@ with st.sidebar:
     use_top20 = _pc2.checkbox("Top 20", False, key="cf_top20")
     use_efl   = _pc3.checkbox("EFL",    False, key="cf_efl")
 
-    # Normalise league name for matching — strip trailing dot/space, lowercase
-    def _lg_norm(s): return str(s).strip().rstrip('.').strip().lower()
-
-    # Preset seed — normalised keys so England 1. matches England 1
+    # Normalised preset sets — no dots, lowercase, matches any format
     _PRESET_NORM = {
         "top5":  {"england 1","spain 1","germany 1","italy 1","france 1"},
         "top20": {"england 1","spain 1","germany 1","italy 1","france 1",
@@ -281,36 +279,31 @@ with st.sidebar:
                   "denmark 1","croatia 1","italy 2","czech 1","norway 1"},
         "efl":   {"england 2","england 3","england 4"},
     }
+    def _lg_norm(s): return str(s).strip().rstrip('.').strip().lower()
 
-    _seed_norm = set()
-    if use_top5:  _seed_norm |= _PRESET_NORM["top5"]
-    if use_top20: _seed_norm |= _PRESET_NORM["top20"]
-    if use_efl:   _seed_norm |= _PRESET_NORM["efl"]
+    _active_norm = set()
+    if use_top5:  _active_norm |= _PRESET_NORM["top5"]
+    if use_top20: _active_norm |= _PRESET_NORM["top20"]
+    if use_efl:   _active_norm |= _PRESET_NORM["efl"]
 
-    # Map normalised seed back to actual league names in the data
-    _seed_matched = {lg for lg in _region_lgs if _lg_norm(lg) in _seed_norm}
+    # Leagues in data that match the active preset
+    _preset_matched = [lg for lg in _region_lgs if _lg_norm(lg) in _active_norm]
 
-    # Detect when presets/regions change → reset selection to preset
+    # What to show selected: preset match if any preset on, else everything
     _preset_sig = (tuple(sorted(sel_regions)), use_top5, use_top20, use_efl)
-    _sig_changed = st.session_state.get("cf_preset_sig") != _preset_sig
-    if _sig_changed:
-        st.session_state["cf_preset_sig"] = _preset_sig
-        # Set the selection to preset matches (or all if no preset)
-        st.session_state["cf_leagues_val"] = sorted(_seed_matched) if _seed_norm else sorted(_region_lgs)
+    if st.session_state.get("cf_preset_sig") != _preset_sig:
+        st.session_state["cf_preset_sig"]  = _preset_sig
+        st.session_state["cf_leagues_val"] = _preset_matched if _active_norm else _region_lgs
 
-    # Initialise on first load
     if "cf_leagues_val" not in st.session_state:
-        st.session_state["cf_leagues_val"] = sorted(_region_lgs)
+        st.session_state["cf_leagues_val"] = _region_lgs
 
-    # Clamp stored value to currently available leagues
+    # Clamp to what's currently available
     _current_val = [lg for lg in st.session_state["cf_leagues_val"] if lg in _region_lgs]
+    if not _current_val:
+        _current_val = _preset_matched if _active_norm else _region_lgs
 
-    cand_leagues = st.multiselect(
-        "Candidate leagues",
-        _region_lgs,
-        default=_current_val,
-    )
-    # Persist user's manual selection for next render
+    cand_leagues = st.multiselect("Candidate leagues", _region_lgs, default=_current_val)
     st.session_state["cf_leagues_val"] = cand_leagues
 
     st.markdown("---")
