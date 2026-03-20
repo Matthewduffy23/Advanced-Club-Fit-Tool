@@ -213,10 +213,59 @@ def load_players(files):
             out[c] = pd.to_numeric(out[c], errors='coerce')
     return out
 
+# ── TEAM CSV COLUMN NORMALISATION (mirrors team_hq.py COL_MAP) ────────
+_TEAM_COL_MAP = {
+    "Team":                          ["team"],
+    "League":                        ["league"],
+    "Matches":                       ["matches"],
+    "Possession %":                  ["possession %", "possession", "possession_pct", "poss %", "poss"],
+    "Pass Accuracy %":               ["pass accuracy %", "passing accuracy %", "pass_accuracy_pct",
+                                      "accurate passes %", "pass acc %", "passing acc %"],
+    "Passes p90":                    ["passes p90", "passes per 90", "passes_p90"],
+    "PPDA":                          ["ppda"],
+    "Defensive Duels p90":           ["defensive duels p90", "defensive duels per 90", "defensive_duels_p90",
+                                      "def duels p90"],
+    "Long Passes p90":               ["long passes p90", "long passes per 90", "long_passes_p90"],
+    "Aerial Duels p90":              ["aerial duels p90", "aerial duels per 90", "aerial_duels_p90"],
+    "Passes to Final Third p90":     ["passes to final third p90", "passes to final 3rd p90",
+                                      "passes_to_final_third_p90", "passes to final third per 90"],
+    "Progressive Passes p90":        ["progressive passes p90", "progressive passes per 90",
+                                      "progressive_passes_p90"],
+    "xG p90":                        ["xg p90", "xg per 90", "xg_p90"],
+    "Touches in Box p90":            ["touches in box p90", "touches in box per 90", "touches_in_box_p90"],
+    "Shots p90":                     ["shots p90", "shots per 90", "shots_p90"],
+    "Crosses p90":                   ["crosses p90", "crosses per 90", "crosses_p90"],
+    "xG Against p90":                ["xg against p90", "xga p90", "xg_against_p90", "xg against per 90"],
+    "Goals Against p90":             ["goals against p90", "goals conceded p90", "goals_against_p90"],
+    "Goals p90":                     ["goals p90", "goals per 90", "goals_p90", "goals scored p90"],
+    "Expected Points":               ["expected points", "xpoints", "x points", "expected_points", "xpts"],
+    "Points":                        ["points", "pts"],
+}
+
+def _normalise_team_cols(df: pd.DataFrame) -> pd.DataFrame:
+    existing_lower = {c.lower().strip(): c for c in df.columns}
+    rename = {}
+    for canonical, aliases in _TEAM_COL_MAP.items():
+        if canonical in df.columns:
+            continue
+        for alias in aliases:
+            if alias in existing_lower:
+                rename[existing_lower[alias]] = canonical
+                break
+    return df.rename(columns=rename)
+
 @st.cache_data(show_spinner=False)
 def load_teams(f):
-    try: return pd.read_csv(f)
-    except: return pd.DataFrame()
+    try:
+        df = pd.read_csv(f)
+        df = _normalise_team_cols(df)
+        # coerce all known numeric columns
+        for c in [k for k in _TEAM_COL_MAP if k not in ("Team", "League")]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df
+    except:
+        return pd.DataFrame()
 
 player_df = load_players(player_files) if player_files else pd.DataFrame()
 team_df   = load_teams(team_file)      if team_file   else pd.DataFrame()
