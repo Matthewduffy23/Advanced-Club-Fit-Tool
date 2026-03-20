@@ -999,24 +999,48 @@ else:
                    for m in metrics if pd.notna(pd.to_numeric(player_row.get(m, np.nan), errors='coerce'))]
         return round(float(np.mean(scores)), 1) if scores else 0.0
 
-    def _squad_depth_table(squad, pg_key):
+
+    def _squad_depth_html(squad, pg_key):
+        """Build styled HTML player cards + plain text for AI prompt."""
         pos_players = squad[squad['_pg'] == pg_key].copy()
         if pos_players.empty:
-            return f"No {pg_key}s in dataset."
+            return "", f"No {pg_key}s in dataset."
         pos_players = pos_players.sort_values('Minutes played', ascending=False)
         cc = next((c for c in squad.columns if 'contract' in c.lower()), None)
-        lines = []
-        for _, p in pos_players.head(5).iterrows():
-            name     = p.get('Player', '?')
-            mins     = int(p.get('Minutes played', 0) or 0)
-            goals    = int(pd.to_numeric(p.get('Goals', 0), errors='coerce') or 0)
-            mv       = fmt_mv(p.get('Market value', 0))
-            age      = int(p.get('Age', 0) or 0)
-            contract = str(p.get(cc, '?'))[:7] if cc else '?'
-            rscore   = _player_role_score(p, pg_key)
-            lines.append(f"  • {name} (Age {age}, {mins}mins, {goals}G, "
-                         f"Role score ~{rscore:.0f}, MV {mv}, Contract {contract})")
-        return "\n".join(lines)
+        import re as _rec
+        html_rows, text_rows = [], []
+        for _, p in pos_players.head(6).iterrows():
+            name    = str(p.get('Player', '?'))
+            mins    = int(p.get('Minutes played', 0) or 0)
+            matches = int(pd.to_numeric(p.get('Matches played', p.get('Matches', 0)), errors='coerce') or 0)
+            goals   = int(pd.to_numeric(p.get('Goals', 0), errors='coerce') or 0)
+            mv      = fmt_mv(p.get('Market value', 0))
+            age     = int(p.get('Age', 0) or 0)
+            rscore  = _player_role_score(p, pg_key)
+            # Contract colour
+            contract_raw = str(p.get(cc, '')) if cc else ''
+            cy_m = _rec.search(r'(\d{4})', contract_raw)
+            cy   = int(cy_m.group(1)) if cy_m else 9999
+            contract_txt = contract_raw[:7] if contract_raw else '—'
+            if cy <= 2026:   cc_col = '#ef4444'
+            elif cy <= 2027: cc_col = '#f59e0b'
+            else:            cc_col = '#64748b'
+            # Role score colour
+            rs_col = '#22c55e' if rscore >= 0.6 else ('#f59e0b' if rscore >= 0.35 else '#ef4444')
+            html_rows.append(
+                f'<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;'
+                f'background:#0f172a;border:1px solid #1e2d42;border-radius:7px;margin-bottom:4px;flex-wrap:wrap;">'
+                f'<span style="font-weight:800;color:#fff;min-width:130px;font-size:.88rem;">{name}</span>'
+                f'<span style="color:#64748b;font-size:.78rem;">Age {age}</span>'
+                f'<span style="background:#1e2d42;color:#cbd5e1;padding:2px 6px;border-radius:4px;font-size:.78rem;">{matches} apps · {mins}min</span>'
+                f'<span style="background:#052e16;color:#22c55e;padding:2px 6px;border-radius:4px;font-size:.78rem;font-weight:700;">{goals}G</span>'
+                f'<span style="background:{rs_col}18;color:{rs_col};border:1px solid {rs_col}44;padding:2px 6px;border-radius:4px;font-size:.78rem;font-weight:700;">Score {rscore:.2f}</span>'
+                f'<span style="color:#64748b;font-size:.78rem;">{mv}</span>'
+                f'<span style="background:{cc_col}18;color:{cc_col};border:1px solid {cc_col}44;padding:2px 6px;border-radius:4px;font-size:.76rem;margin-left:auto;">📄 {contract_txt}</span>'
+                f'</div>'
+            )
+            text_rows.append(f"{name} (Age {age}, {matches} apps, {mins}min, {goals}G, Score {rscore:.2f}, MV {mv}, Contract {contract_txt})")
+        return "".join(html_rows), "\n".join(text_rows)
 
     def run_ai_analysis(ai_team, fit_pct, sim_pct, ls_val, avg_mv):
         squad = player_df[player_df['Team'] == ai_team].copy()
@@ -1029,7 +1053,9 @@ else:
             if col in squad.columns:
                 squad[col] = pd.to_numeric(squad[col], errors='coerce').fillna(0)
 
-        depth_table  = _squad_depth_table(squad, _pg)
+        depth_html, depth_text = _squad_depth_html(squad, _pg)
+        st.session_state[f'_depth_html_{ai_team}'] = depth_html
+
         avg_age      = round(float(squad['Age'].mean()), 1) if not squad.empty else "—"
         u23          = int((squad['Age'] < 23).sum())
         o28          = int((squad['Age'] > 28).sum())
@@ -1040,39 +1066,32 @@ else:
         league_gap   = abs(ls_val - _ls_lookup(_tgt_league))
         dest_league  = squad['League'].iloc[0] if not squad.empty else '?'
 
-        prompt = f"""You are a senior football recruitment analyst writing a structured scouting report for the board.
+        prompt = f"""You are a senior football recruitment analyst writing a structured scouting report.
 
-=== TARGET PLAYER ===
-Name: {sel_name} | Role: {_pg} | League: {_tgt_league} | Age: {_tgt.get('Age','?')} | MV: {fmt_mv(_tgt.get('Market value'))}
+TARGET: {sel_name} | {_pg} | {_tgt_league} | Age {_tgt.get('Age','?')} | MV {fmt_mv(_tgt.get('Market value'))}
+CLUB: {ai_team} | {dest_league} | Strength {ls_val:.0f}/100 | Fit {fit_pct:.0f}% | Similarity {sim_pct:.0f}% | Squad avg MV {fmt_mv(avg_mv)}
 
-=== DESTINATION CLUB ===
-Club: {ai_team} | League: {dest_league} | League Strength: {ls_val:.0f}/100
-Fit Score: {fit_pct:.0f}% | Player Similarity: {sim_pct:.0f}% | Squad Avg MV: {fmt_mv(avg_mv)}
+{_pg} PLAYERS AT {ai_team} (sorted by minutes):
+{depth_text}
 
-=== SQUAD DEPTH AT {_pg} ===
-{depth_table}
+SQUAD: Avg age {avg_age} | U23: {u23} | Over 28: {o28} | {pos_count}
+Top value players: {high_val_str}
+League gap vs {_tgt_league}: {league_gap:.0f} pts
 
-=== BROADER SQUAD ===
-Avg age: {avg_age} | U23: {u23} | Over 28: {o28} | Position counts: {pos_count}
-Highest value players: {high_val_str}
-League strength gap vs {_tgt_league}: {league_gap:.0f} points
+Write EXACTLY 4 sections. Plain text only, no markdown, no bold, no asterisks. Header in CAPS followed by colon.
 
-Write EXACTLY these 5 sections. Plain text only, no markdown, no bold, no asterisks.
-Each section starts on its own line with the header in CAPS followed by a colon.
-Be specific — name players, reference numbers, no filler.
+SQUAD DEPTH: 1-2 sentences. Is there a vacancy or competition at {_pg}? Reference role scores and contract situations — do NOT list all players again, just summarise what they mean.
 
-SQUAD DEPTH: 2-3 sentences. Assess the current {_pg} options. Reference the players above — minutes, goals, contract situation and role score. Is there a vacancy or strong competition?
+BREAKDOWN: 2-3 sentences. The {sim_pct:.0f}% similarity score means there are players here with comparable statistical profiles to {sel_name} — name the key metrics that drove the match (e.g. similar xG output, dribbling rate, passing volume). Note where they differ and what the {ls_val:.0f}/100 league strength means for this ranking.
 
-BREAKDOWN: 2-3 sentences. Explain why this club scored {fit_pct:.0f}%. Reference the {sim_pct:.0f}% player similarity and what it means statistically. Mention the league strength of {ls_val:.0f}/100.
+STYLE: 2 sentences max. First: {ai_team}'s tactical identity in {dest_league} in plain terms (pressing, possession, direct, transition). Second: one sentence on whether that suits {sel_name} as a {_pg}.
 
-STYLE: 2 sentences. Based on squad profile and league, describe the likely style of play at {ai_team} and whether it suits {sel_name}'s profile as a {_pg}.
+FIT VERDICT: SIGN / MONITOR / PASS. 2 sentences. League gap {league_gap:.0f} pts, MV {fmt_mv(tgt_mv_val)} vs squad avg {fmt_mv(avg_mv)} — is the price realistic and is this step up / lateral / step down?
 
-FIT VERDICT: SIGN / MONITOR / PASS. 2-3 sentences. Is the deal realistic? Consider the {league_gap:.0f}-point league gap, {sel_name}'s MV of {fmt_mv(tgt_mv_val)} vs squad avg {fmt_mv(avg_mv)}, and whether this is a step up, lateral, or step down.
-
-SUMMARY LINE: One punchy sentence a DoF can read in 5 seconds. Start with SIGN / MONITOR / PASS."""
+SUMMARY LINE: Max 15 words. Start with SIGN / MONITOR / PASS."""
 
         resp = client_ai.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=900,
+            model="claude-haiku-4-5-20251001", max_tokens=700,
             messages=[{"role": "user", "content": prompt}])
         return resp.content[0].text.strip()
 
@@ -1121,11 +1140,21 @@ SUMMARY LINE: One punchy sentence a DoF can read in 5 seconds. Start with SIGN /
             content = sections.get(k, "")
             if not content: continue
             bc = colors[k]
-            st.markdown(
-                f'<div class="acard" style="border-left-color:{bc};margin-bottom:10px;">'
-                f'<h4 style="color:{bc};margin:0 0 6px 0;">{icons[k]} {k}</h4>'
-                f'<p style="margin:0;line-height:1.7;">{content}</p></div>',
-                unsafe_allow_html=True)
+            if k == "SQUAD DEPTH":
+                depth_html = st.session_state.get(f'_depth_html_{ai_team}', '')
+                st.markdown(
+                    f'<div class="acard" style="border-left-color:{bc};margin-bottom:10px;">'
+                    f'<h4 style="color:{bc};margin:0 0 10px 0;">{icons[k]} {k}</h4>'
+                    f'{depth_html}'
+                    f'<p style="margin:10px 0 0 0;color:#94a3b8;font-size:.85rem;line-height:1.6;font-style:italic;">'
+                    f'{content}</p></div>',
+                    unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    f'<div class="acard" style="border-left-color:{bc};margin-bottom:10px;">'
+                    f'<h4 style="color:{bc};margin:0 0 6px 0;">{icons[k]} {k}</h4>'
+                    f'<p style="margin:0;line-height:1.7;">{content}</p></div>',
+                    unsafe_allow_html=True)
 
     # ── Per-club expanders ────────────────────────────────────────────
     for _, row in results.iterrows():
