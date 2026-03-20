@@ -481,6 +481,8 @@ with st.spinner("Computing…"):
     results = club[['Team','League','LS','SimPct','FinalFit','AvgMV']]\
         .sort_values('FinalFit', ascending=False)\
         .reset_index(drop=True).head(int(top_n))
+    results['FinalFit'] = results['FinalFit'].fillna(0).round(1)
+    results['SimPct']   = results['SimPct'].fillna(0).round(1)
     results.insert(0,'Rank', range(1, len(results)+1))
 
 # ── DISPLAY ───────────────────────────────────────────────────────────
