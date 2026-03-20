@@ -309,8 +309,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**Scoring Weights**")
-    league_weight = st.slider("League quality weight", 0.0, 1.0, 0.35, 0.05)
-    market_weight = st.slider("Market value weight",   0.0, 1.0, 0.20, 0.05)
+    league_weight = st.slider("League quality weight", 0.0, 1.0, 0.20, 0.05)
+    market_weight = st.slider("Market value weight",   0.0, 1.0, 0.10, 0.05)
 
     st.markdown("**Filters**")
     min_ls   = st.slider("Min league strength", 0, 101, 0)
@@ -479,7 +479,7 @@ with st.expander("⚙️ Advanced Settings", expanded=False):
         max_age  = st.slider("Max candidate age", 16, 45, 40)
     with ac2:
         mv_override      = st.number_input("MV override (£)", 0, 100_000_000, 0, 500_000)
-        style_blend_w    = st.slider("Team style blend weight", 0.0, 1.0, 0.30, 0.05)
+        style_blend_w    = st.slider("Team style blend weight", 0.0, 1.0, 0.43, 0.05)
 
     st.markdown("**Metric weights**")
     wc = st.columns(3)
@@ -905,12 +905,16 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     ax.plot([LEFT, RIGHT], [div_y]*2, color=DIV, lw=0.9, zorder=2)
 
     _named_styles = [s for s in (sel_styles or []) if s != "Similar to Current System"]
-    _lw_pct  = int(round(league_weight * 100))
-    _mv_pct  = int(round(market_weight * 100))
-    _sim_pct = max(0, 100 - _lw_pct - _mv_pct)
+    _lw_pct   = int(round(league_weight * 100))
+    _mv_pct   = int(round(market_weight * 100))
+    _fit_pct  = 100 - _lw_pct - _mv_pct          # StyleFit share
+    _sty_pct  = int(round(_fit_pct * style_blend_w)) if 'style_blend_w' in dir() else int(round(_fit_pct * 0.43))
+    _play_pct = _fit_pct - _sty_pct
 
-    summary_line1 = (f"Ranked by: {_sim_pct}% player profile match ({pg}), "
-                     f"{_lw_pct}% league quality, {_mv_pct}% market value. "
+    summary_line1 = (f"Ranked by: {_play_pct}% player profile ({pg}), "
+                     f"{_sty_pct}% team style, "
+                     f"{_lw_pct}% league quality, "
+                     f"{_mv_pct}% market value. "
                      f"{min_mins}+ mins only.")
     summary_line2 = f"League quality vs {tgt_league} (strength {tgt_ls:.0f}/100)."
     summary_line3 = (f"Style filters ({', '.join(_named_styles)}): top 40% within own league required."
