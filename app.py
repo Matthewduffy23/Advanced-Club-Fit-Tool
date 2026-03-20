@@ -967,6 +967,7 @@ st.download_button("⬇️ Download CSV",
     st.session_state['cf_csv'],
     f"club_fit_{sel_name.replace(' ','_')}.csv", "text/csv")
 
+
 # ── AI SQUAD ANALYSIS ─────────────────────────────────────────────────
 st.markdown("---")
 st.markdown('<div class="sec">🤖 AI Squad Analysis</div>', unsafe_allow_html=True)
@@ -974,132 +975,250 @@ st.markdown('<div class="sec">🤖 AI Squad Analysis</div>', unsafe_allow_html=T
 if not api_key:
     st.info("Add your Anthropic API key in the sidebar to unlock squad analysis for each club.")
 else:
-    st.caption("Expand any club below to generate an AI squad analysis.")
+    st.caption("Expand any club below to generate a full AI scouting report.")
     client_ai = anthropic.Anthropic(api_key=api_key)
 
-    def run_ai_analysis(ai_team, fit_pct):
+    # Role metrics used to compute a proxy performance score per player
+    ROLE_SCORE_WEIGHTS = {
+        'GK':  ['Save rate, %','Accurate passes, %','Accurate long passes, %'],
+        'CB':  ['Defensive duels won, %','Aerial duels won, %','Progressive passes per 90',
+                'Progressive runs per 90','Accurate passes, %'],
+        'FB':  ['Defensive duels won, %','xA per 90','Dribbles per 90',
+                'Touches in box per 90','Accurate passes, %'],
+        'CM':  ['Passes per 90','Accurate passes, %','Progressive passes per 90',
+                'xA per 90','Defensive duels per 90'],
+        'ATT': ['xA per 90','Dribbles per 90','Touches in box per 90',
+                'Progressive runs per 90','Passes to penalty area per 90'],
+        'CF':  ['Non-penalty goals per 90','xG per 90','Touches in box per 90',
+                'Dribbles per 90','xA per 90'],
+    }
+
+    def _player_role_score(player_row, pg_key):
+        metrics = ROLE_SCORE_WEIGHTS.get(pg_key, [])
+        scores  = [float(pd.to_numeric(player_row.get(m, np.nan), errors='coerce'))
+                   for m in metrics if pd.notna(pd.to_numeric(player_row.get(m, np.nan), errors='coerce'))]
+        return round(float(np.mean(scores)), 1) if scores else 0.0
+
+    def _squad_depth_table(squad, pg_key):
+        pos_players = squad[squad['_pg'] == pg_key].copy()
+        if pos_players.empty:
+            return f"No {pg_key}s in dataset."
+        pos_players = pos_players.sort_values('Minutes played', ascending=False)
+        cc = next((c for c in squad.columns if 'contract' in c.lower()), None)
+        lines = []
+        for _, p in pos_players.head(5).iterrows():
+            name     = p.get('Player', '?')
+            mins     = int(p.get('Minutes played', 0) or 0)
+            goals    = int(pd.to_numeric(p.get('Goals', 0), errors='coerce') or 0)
+            mv       = fmt_mv(p.get('Market value', 0))
+            age      = int(p.get('Age', 0) or 0)
+            contract = str(p.get(cc, '?'))[:7] if cc else '?'
+            rscore   = _player_role_score(p, pg_key)
+            lines.append(f"  • {name} (Age {age}, {mins}mins, {goals}G, "
+                         f"Role score ~{rscore:.0f}, MV {mv}, Contract {contract})")
+        return "\n".join(lines)
+
+    def run_ai_analysis(ai_team, fit_pct, sim_pct, ls_val, avg_mv):
         squad = player_df[player_df['Team'] == ai_team].copy()
         if '_pg' not in squad.columns:
             squad['_pg'] = squad['Position'].apply(detect_pos)
-        squad['Market value']   = pd.to_numeric(squad.get('Market value',   0), errors='coerce').fillna(0)
-        squad['Age']            = pd.to_numeric(squad.get('Age',            0), errors='coerce')
+        squad['Market value']   = pd.to_numeric(squad.get('Market value', 0), errors='coerce').fillna(0)
+        squad['Age']            = pd.to_numeric(squad.get('Age', 0), errors='coerce').fillna(0)
         squad['Minutes played'] = pd.to_numeric(squad.get('Minutes played', 0), errors='coerce').fillna(0)
+        for col in ROLE_SCORE_WEIGHTS.get(_pg, []):
+            if col in squad.columns:
+                squad[col] = pd.to_numeric(squad[col], errors='coerce').fillna(0)
 
-        depth   = squad.groupby('_pg').size().to_dict()
-        avg_age = round(float(squad['Age'].mean()), 1) if not squad.empty else "—"
-        u23     = int((squad['Age'] < 23).sum())
-        o28     = int((squad['Age'] > 28).sum())
+        depth_table  = _squad_depth_table(squad, _pg)
+        avg_age      = round(float(squad['Age'].mean()), 1) if not squad.empty else "—"
+        u23          = int((squad['Age'] < 23).sum())
+        o28          = int((squad['Age'] > 28).sum())
+        pos_count    = squad.groupby('_pg').size().to_dict()
+        high_val     = squad.sort_values('Market value', ascending=False).head(4)
+        high_val_str = "; ".join(f"{r.get('Player','?')} {fmt_mv(r.get('Market value',0))}" for _, r in high_val.iterrows())
+        tgt_mv_val   = float(pd.to_numeric(_tgt.get('Market value', 0), errors='coerce') or 0)
+        league_gap   = abs(ls_val - _ls_lookup(_tgt_league))
+        dest_league  = squad['League'].iloc[0] if not squad.empty else '?'
 
-        top_players = []
-        for g in squad['_pg'].unique():
-            gs = squad[squad['_pg']==g].sort_values('Minutes played', ascending=False)
-            if not gs.empty:
-                p = gs.iloc[0]
-                top_players.append(
-                    f"{p.get('Player','?')} ({g}, {p.get('Minutes played',0):.0f}mins, "
-                    f"MV {fmt_mv(p.get('Market value',0))})")
+        prompt = f"""You are a senior football recruitment analyst writing a structured scouting report for the board.
 
-        high_val = squad.sort_values('Market value', ascending=False).head(5)
-        high_val_str = "; ".join(
-            f"{r.get('Player','?')} {fmt_mv(r.get('Market value',0))}"
-            for _, r in high_val.iterrows())
+=== TARGET PLAYER ===
+Name: {sel_name} | Role: {_pg} | League: {_tgt_league} | Age: {_tgt.get('Age','?')} | MV: {fmt_mv(_tgt.get('Market value'))}
 
-        cc = next((c for c in squad.columns if 'contract' in c.lower()), None)
-        expiring = ""
-        if cc:
-            exp = squad[pd.to_numeric(squad[cc].astype(str).str[:4],
-                                      errors='coerce').fillna(2099) <= 2026]
-            if not exp.empty:
-                expiring = "Expiring ≤2026: " + ", ".join(exp['Player'].head(5).tolist())
+=== DESTINATION CLUB ===
+Club: {ai_team} | League: {dest_league} | League Strength: {ls_val:.0f}/100
+Fit Score: {fit_pct:.0f}% | Player Similarity: {sim_pct:.0f}% | Squad Avg MV: {fmt_mv(avg_mv)}
 
-        prompt = f"""You are head of recruitment at a data-driven club presenting to the board.
+=== SQUAD DEPTH AT {_pg} ===
+{depth_table}
 
-TARGET PLAYER: {sel_name} | {_pg} | {_tgt_league} | Age {_tgt.get('Age','?')} | MV {fmt_mv(_tgt.get('Market value'))}
-DESTINATION CLUB: {ai_team} | Club Fit Score: {fit_pct}%
+=== BROADER SQUAD ===
+Avg age: {avg_age} | U23: {u23} | Over 28: {o28} | Position counts: {pos_count}
+Highest value players: {high_val_str}
+League strength gap vs {_tgt_league}: {league_gap:.0f} points
 
-SQUAD DATA:
-- Position depth: {depth}
-- Avg age: {avg_age} | U23 players: {u23} | Over 28: {o28}
-- Key players by minutes: {'; '.join(top_players[:6])}
-- Highest value players: {high_val_str}
-- {expiring}
+Write EXACTLY these 5 sections. Plain text only, no markdown, no bold, no asterisks.
+Each section starts on its own line with the header in CAPS followed by a colon.
+Be specific — name players, reference numbers, no filler.
 
-Respond with EXACTLY these 4 headers, each followed by one sentence. No markdown, no bold, no extra text:
+SQUAD DEPTH: 2-3 sentences. Assess the current {_pg} options. Reference the players above — minutes, goals, contract situation and role score. Is there a vacancy or strong competition?
 
-SQUAD DEPTH: [one sentence about vacancy or competition at {_pg}]
-AGE PROFILE: [one sentence about squad age and timing for signing {sel_name}]
-DEPARTURE RISK: [one sentence about which high-value player may leave]
-FIT VERDICT: [SIGN / MONITOR / PASS with one reason tied to the {fit_pct}% fit score]"""
+BREAKDOWN: 2-3 sentences. Explain why this club scored {fit_pct:.0f}%. Reference the {sim_pct:.0f}% player similarity and what it means statistically. Mention the league strength of {ls_val:.0f}/100.
+
+STYLE: 2 sentences. Based on squad profile and league, describe the likely style of play at {ai_team} and whether it suits {sel_name}'s profile as a {_pg}.
+
+FIT VERDICT: SIGN / MONITOR / PASS. 2-3 sentences. Is the deal realistic? Consider the {league_gap:.0f}-point league gap, {sel_name}'s MV of {fmt_mv(tgt_mv_val)} vs squad avg {fmt_mv(avg_mv)}, and whether this is a step up, lateral, or step down.
+
+SUMMARY LINE: One punchy sentence a DoF can read in 5 seconds. Start with SIGN / MONITOR / PASS."""
 
         resp = client_ai.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=500,
-            messages=[{"role":"user","content":prompt}])
+            model="claude-haiku-4-5-20251001", max_tokens=900,
+            messages=[{"role": "user", "content": prompt}])
         return resp.content[0].text.strip()
 
-    def parse_and_render(text, ai_team):
+    def parse_and_render(text, ai_team, fit_pct):
         import re as _re
-        sections = {}
-        # Strip markdown bold, clean up
-        clean = _re.sub(r'\*+', '', text)
+        sections  = {}
+        clean     = _re.sub(r'\*+', '', text)
+        KEYS      = ["SQUAD DEPTH","BREAKDOWN","STYLE","FIT VERDICT","SUMMARY LINE"]
         cur_key, cur_lines = None, []
         for line in clean.split('\n'):
             line = line.strip()
-            if not line:
-                continue
-            # Match any of the 4 keys case-insensitively, with optional colon/dash after
+            if not line: continue
             matched = False
-            for k in ["SQUAD DEPTH", "AGE PROFILE", "DEPARTURE RISK", "FIT VERDICT"]:
+            for k in KEYS:
                 if _re.match(rf'^{k}[\s:.\-–]*', line, _re.IGNORECASE):
-                    if cur_key:
-                        sections[cur_key] = " ".join(cur_lines).strip()
-                    cur_key = k
-                    rest = _re.sub(rf'^{k}[\s:.\-–]*', '', line, flags=_re.IGNORECASE).strip()
+                    if cur_key: sections[cur_key] = " ".join(cur_lines).strip()
+                    cur_key   = k
+                    rest      = _re.sub(rf'^{k}[\s:.\-–]*', '', line, flags=_re.IGNORECASE).strip()
                     cur_lines = [rest] if rest else []
-                    matched = True
+                    matched   = True
                     break
             if not matched and cur_key:
                 cur_lines.append(line)
-        if cur_key:
-            sections[cur_key] = " ".join(cur_lines).strip()
+        if cur_key: sections[cur_key] = " ".join(cur_lines).strip()
 
-        # Fallback: if parsing failed entirely, show raw text
         if not any(sections.values()):
-            st.markdown(f"### {ai_team} — Squad Intelligence")
+            st.markdown(f"### {ai_team} — Scouting Report")
             st.write(text)
             return
 
-        icons  = {"SQUAD DEPTH":"👥","AGE PROFILE":"📊","DEPARTURE RISK":"⚠️","FIT VERDICT":"✅"}
-        colors = {"SQUAD DEPTH":"#3b82f6","AGE PROFILE":"#8b5cf6",
-                  "DEPARTURE RISK":"#f59e0b","FIT VERDICT":"#22c55e"}
-        st.markdown(f"### {ai_team} — Squad Intelligence")
-        for k in ["SQUAD DEPTH","AGE PROFILE","DEPARTURE RISK","FIT VERDICT"]:
-            content = sections.get(k, "—")
+        icons  = {"SQUAD DEPTH":"👥","BREAKDOWN":"📐","STYLE":"🎨",
+                  "FIT VERDICT":"✅","SUMMARY LINE":"⚡"}
+        colors = {"SQUAD DEPTH":"#3b82f6","BREAKDOWN":"#8b5cf6","STYLE":"#06b6d4",
+                  "FIT VERDICT":"#f59e0b","SUMMARY LINE":"#22c55e"}
+
+        fc = score_col(float(fit_pct))
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">'
+            f'<span style="font-family:\'Barlow Condensed\',sans-serif;font-size:1.4rem;'
+            f'font-weight:800;color:#fff;">{ai_team} — Scouting Report</span>'
+            f'<span style="background:{fc};color:#000;font-weight:800;padding:4px 12px;'
+            f'border-radius:6px;font-size:1rem;">{fit_pct:.0f}%</span></div>',
+            unsafe_allow_html=True)
+
+        for k in KEYS:
+            content = sections.get(k, "")
+            if not content: continue
             bc = colors[k]
             st.markdown(
-                f'<div class="acard" style="border-left-color:{bc}">'
-                f'<h4>{icons[k]} {k}</h4><p>{content}</p></div>',
+                f'<div class="acard" style="border-left-color:{bc};margin-bottom:10px;">'
+                f'<h4 style="color:{bc};margin:0 0 6px 0;">{icons[k]} {k}</h4>'
+                f'<p style="margin:0;line-height:1.7;">{content}</p></div>',
                 unsafe_allow_html=True)
 
+    # ── Per-club expanders ────────────────────────────────────────────
     for _, row in results.iterrows():
         team_name = row['Team']
         fit_score = row['FinalFit']
-        cache_key = f"ai_cache_{team_name}_{sel_name}"
-        with st.expander(
-            f"#{int(row['Rank'])}  {team_name}  ·  {row['League']}  ·  "
-            f"Fit {fit_score:.0f}%", expanded=False):
+        cache_key = f"ai_v2_{team_name}_{sel_name}"
 
-            # Show cached result if available
+        with st.expander(
+            f"#{int(row['Rank'])}  {team_name}  ·  {row['League']}  ·  Fit {fit_score:.0f}%",
+            expanded=False):
+
             if cache_key in st.session_state:
-                parse_and_render(st.session_state[cache_key], team_name)
-                if st.button(f"🔄 Regenerate — {team_name}", key=f"regen_{team_name}"):
+                parse_and_render(st.session_state[cache_key], team_name, fit_score)
+                if st.button(f"🔄 Regenerate", key=f"regen_{team_name}"):
                     del st.session_state[cache_key]
                     st.rerun()
             else:
-                if st.button(f"Generate AI Analysis — {team_name}", key=f"ai_{team_name}"):
+                if st.button(f"🔍 Generate Scouting Report — {team_name}", key=f"ai_{team_name}"):
                     with st.spinner(f"Analysing {team_name}…"):
                         try:
-                            ai_text = run_ai_analysis(team_name, fit_score)
+                            ai_text = run_ai_analysis(
+                                team_name, fit_score,
+                                row['SimPct'], row['LS'], row['AvgMV'])
                             st.session_state[cache_key] = ai_text
-                            parse_and_render(ai_text, team_name)
+                            parse_and_render(ai_text, team_name, fit_score)
                         except Exception as e:
                             st.error(f"AI error: {e}")
+
+    # ── Final Summary Report ──────────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="sec">📋 Final Summary Report</div>', unsafe_allow_html=True)
+
+    import re as _re3
+    all_summaries = {}
+    for _, row in results.iterrows():
+        ck = f"ai_v2_{row['Team']}_{sel_name}"
+        if ck in st.session_state:
+            m = _re3.search(r'SUMMARY LINE[\s:.\-–]*(.*)', st.session_state[ck], _re3.IGNORECASE)
+            if m:
+                all_summaries[row['Team']] = (m.group(1).strip(), row['FinalFit'])
+
+    analysed = len(all_summaries)
+    total    = len(results)
+
+    if analysed == 0:
+        st.info(f"Generate scouting reports above to build the summary ({total} clubs available).")
+    else:
+        st.caption(f"{analysed}/{total} clubs analysed.")
+        for team, (summary, score) in sorted(all_summaries.items(), key=lambda x: -x[1][1]):
+            fc = score_col(float(score))
+            verdict = ("🟢 SIGN" if "SIGN" in summary.upper()
+                       else ("🟡 MONITOR" if "MONITOR" in summary.upper() else "🔴 PASS"))
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;'
+                f'background:#111827;border:1px solid #1e2d42;border-radius:8px;margin-bottom:6px;">'
+                f'<span style="background:{fc};color:#000;font-weight:800;padding:2px 8px;'
+                f'border-radius:4px;min-width:36px;text-align:center;">{score:.0f}</span>'
+                f'<span style="font-weight:700;color:#fff;min-width:160px;">{team}</span>'
+                f'<span style="color:#94a3b8;font-size:.85rem;">{verdict} — {summary}</span>'
+                f'</div>', unsafe_allow_html=True)
+
+        if st.button("🤖 Generate Full Board Summary", type="primary", key="gen_final_summary"):
+            summary_lines = "\n".join(
+                f"• {team} (Fit {score:.0f}%): {summary}"
+                for team, (summary, score) in sorted(all_summaries.items(), key=lambda x: -x[1][1]))
+            final_prompt = f"""You are a head of recruitment writing a board-ready summary.
+
+TARGET PLAYER: {sel_name} | {_pg} | {_tgt_league} | Age {_tgt.get('Age','?')} | MV {fmt_mv(_tgt.get('Market value'))}
+
+CLUB VERDICTS:
+{summary_lines}
+
+Write a concise board summary (150-200 words). Cover:
+1. Top recommendation and why
+2. Best value option if different
+3. Any deals to avoid and why
+4. One clear action point
+
+Plain text, no headers, no markdown. Write as if presenting verbally to a Director of Football."""
+
+            with st.spinner("Generating board summary…"):
+                try:
+                    resp = client_ai.messages.create(
+                        model="claude-haiku-4-5-20251001", max_tokens=500,
+                        messages=[{"role": "user", "content": final_prompt}])
+                    st.session_state['cf_final_summary'] = resp.content[0].text.strip()
+                except Exception as e:
+                    st.error(f"Summary error: {e}")
+
+        if 'cf_final_summary' in st.session_state:
+            st.markdown(
+                f'<div class="acard" style="border-left-color:#22c55e;margin-top:16px;">'
+                f'<h4 style="color:#22c55e;margin:0 0 8px 0;">⚡ Board Summary — {sel_name}</h4>'
+                f'<p style="margin:0;line-height:1.8;font-size:.95rem;">'
+                f'{st.session_state["cf_final_summary"]}</p></div>',
+                unsafe_allow_html=True)
