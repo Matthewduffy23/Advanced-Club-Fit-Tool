@@ -20,6 +20,14 @@ section[data-testid="stSidebar"]{background:#0d1117!important;border-right:1px s
 label,p,span,div,[data-testid="stWidgetLabel"] p,.stMarkdown p{color:#e2e8f0!important;}
 .stSelectbox>div>div,.stMultiSelect>div>div{background:#111827!important;border-color:#1e2d42!important;}
 input,textarea{background:#111827!important;color:#e2e8f0!important;border-color:#1e2d42!important;}
+/* Multiselect dropdown options — black text on white background */
+[data-baseweb="popover"] ul li{color:#000000!important;background:#ffffff!important;}
+[data-baseweb="popover"] ul li:hover{background:#e8f0fe!important;color:#000000!important;}
+[data-baseweb="menu"] [role="option"]{color:#000000!important;background:#ffffff!important;}
+[data-baseweb="select"] [role="option"]{color:#000000!important;}
+/* Selected tags in multiselect */
+[data-baseweb="tag"]{background:#1e3a5f!important;}
+[data-baseweb="tag"] span{color:#ffffff!important;}
 .stButton>button{background:#3b82f6!important;color:#fff!important;border:none!important;font-weight:700!important;border-radius:6px!important;}
 .stButton>button:hover{opacity:.85!important;}
 div[data-testid="stExpander"]{background:#111827;border-color:#1e2d42;border-radius:8px;}
@@ -264,7 +272,6 @@ with st.sidebar:
     if use_top20: _seed |= PRESET_LEAGUES["Top 20 Europe"]
     if use_efl:   _seed |= PRESET_LEAGUES["EFL (England 2–4)"]
 
-    # Match preset names to actual league names in data (handles trailing dot differences)
     def _match_preset(seed_set, available):
         matched = set()
         for lg in available:
@@ -275,20 +282,29 @@ with st.sidebar:
         return matched
 
     _seed_matched = _match_preset(_seed, _region_lgs)
-    _default_lgs  = sorted(_seed_matched) if _seed_matched else _region_lgs
 
-    # Reset league selection when presets change
+    # When presets change, update the extra_leagues session state
     _preset_sig = (tuple(sorted(sel_regions)), use_top5, use_top20, use_efl)
     if st.session_state.get("cf_preset_sig") != _preset_sig:
-        st.session_state["cf_preset_sig"]  = _preset_sig
-        st.session_state["cf_leagues_sel"] = _default_lgs
+        st.session_state["cf_preset_sig"] = _preset_sig
+        # Store only the "extra" leagues the user has manually added on top of preset
+        st.session_state["cf_extra_lgs"] = []
 
-    cand_leagues = st.multiselect(
+    # The active league list = preset matches + any manually added extras
+    _extra_lgs = st.session_state.get("cf_extra_lgs", [])
+    _default_selection = sorted((_seed_matched | set(_extra_lgs)) & set(_region_lgs)) \
+                         if _seed else _region_lgs
+
+    # Use a no-key multiselect so we control value fully via default
+    _selected = st.multiselect(
         "Candidate leagues",
         _region_lgs,
-        default=st.session_state.get("cf_leagues_sel", _default_lgs),
+        default=_default_selection,
         key="cf_leagues_sel",
     )
+    # Track any leagues added beyond the preset so they survive preset changes
+    st.session_state["cf_extra_lgs"] = [lg for lg in _selected if lg not in _seed_matched]
+    cand_leagues = _selected
 
     st.markdown("---")
     st.markdown("**Scoring Weights**")
