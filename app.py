@@ -689,6 +689,9 @@ if run:
         st.session_state['cf_results']    = results
         st.session_state['cf_sel_name']   = sel_name
         st.session_state['cf_sel_styles'] = sel_styles
+        st.session_state['cf_tgt']        = dict(tgt)
+        st.session_state['cf_pg']         = pg
+        st.session_state['cf_tgt_league'] = tgt_league
         st.session_state['cf_img_params'] = dict(
             pg=pg, tgt_league=tgt_league, tgt_ls=tgt_ls,
             league_weight=league_weight, market_weight=market_weight,
@@ -703,6 +706,9 @@ results    = st.session_state['cf_results']
 sel_name   = st.session_state['cf_sel_name']
 sel_styles = st.session_state['cf_sel_styles']
 _ip        = st.session_state['cf_img_params']
+_tgt       = st.session_state.get('cf_tgt', {})
+_pg        = st.session_state.get('cf_pg', '')
+_tgt_league = st.session_state.get('cf_tgt_league', '')
 
 # ── DISPLAY ───────────────────────────────────────────────────────────
 st.markdown(f'<div class="sec">Top {int(top_n)} Club Fits — {sel_name}</div>', unsafe_allow_html=True)
@@ -811,7 +817,7 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
                 ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=z), (CREST_X, y), frameon=False, zorder=5))
             ax.text(NAME_X, y+row_h*0.18, str(row['Team']).upper(), fontsize=28, fontweight="bold", color=TXT, ha="left", va="center", zorder=6)
             ax.text(NAME_X, y-row_h*0.22, str(row['League']), fontsize=19, color=SUB, ha="left", va="center", zorder=6)
-            frac = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
+            frac = max(0.0, min(1.0, float(row['FinalFit']) / 100.0))
             ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
             ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W*frac, BAR_H2, color=BAR_FG, zorder=3))
             fc = score_col(float(row['FinalFit']))
@@ -884,8 +890,8 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         ax.text(0.21, y-0.10, str(row['League']),
                 fontsize=12, color=SUB, ha="left", va="center", zorder=5)
 
-        # Fit bar
-        frac = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
+        # Fit bar — out of 100 so bars are comparable across searches
+        frac = max(0.0, min(1.0, float(row['FinalFit']) / 100.0))
         ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
         ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W*frac, BAR_H2, color=BAR_FG, zorder=3))
 
@@ -1008,7 +1014,7 @@ else:
 
         prompt = f"""You are head of recruitment at a data-driven club presenting to the board.
 
-TARGET PLAYER: {sel_name} | {pg} | {tgt_league} | Age {tgt.get('Age','?')} | MV {fmt_mv(tgt.get('Market value'))}
+TARGET PLAYER: {sel_name} | {_pg} | {_tgt_league} | Age {_tgt.get('Age','?')} | MV {fmt_mv(_tgt.get('Market value'))}
 DESTINATION CLUB: {ai_team} | Club Fit Score: {fit_pct}%
 
 SQUAD DATA:
@@ -1020,7 +1026,7 @@ SQUAD DATA:
 
 Write exactly 4 sections, one sentence each. Be specific, use player names, no filler:
 
-SQUAD DEPTH: Is there a vacancy or competition at {pg}? Name the current incumbent if clear.
+SQUAD DEPTH: Is there a vacancy or competition at {_pg}? Name the current incumbent if clear.
 AGE PROFILE: What does the squad's age shape mean for signing {sel_name} now vs waiting?
 DEPARTURE RISK: Which high-value player is most likely to leave, opening a spot or budget?
 FIT VERDICT: SIGN / MONITOR / PASS with one decisive reason tied to the {fit_pct}% fit score."""
@@ -1064,17 +1070,23 @@ FIT VERDICT: SIGN / MONITOR / PASS with one decisive reason tied to the {fit_pct
     for _, row in results.iterrows():
         team_name = row['Team']
         fit_score = row['FinalFit']
+        cache_key = f"ai_cache_{team_name}_{sel_name}"
         with st.expander(
             f"#{int(row['Rank'])}  {team_name}  ·  {row['League']}  ·  "
             f"Fit {fit_score:.0f}%", expanded=False):
-            if st.button(f"Generate AI Analysis — {team_name}",
-                         key=f"ai_{team_name}"):
-                with st.spinner(f"Analysing {team_name}…"):
-                    try:
-                        ai_text = run_ai_analysis(team_name, fit_score)
-                        parse_and_render(ai_text, team_name)
-                        st.session_state[f"ai_cache_{team_name}"] = ai_text
-                    except Exception as e:
-                        st.error(f"AI error: {e}")
-            elif f"ai_cache_{team_name}" in st.session_state:
-                parse_and_render(st.session_state[f"ai_cache_{team_name}"], team_name)
+
+            # Show cached result if available
+            if cache_key in st.session_state:
+                parse_and_render(st.session_state[cache_key], team_name)
+                if st.button(f"🔄 Regenerate — {team_name}", key=f"regen_{team_name}"):
+                    del st.session_state[cache_key]
+                    st.rerun()
+            else:
+                if st.button(f"Generate AI Analysis — {team_name}", key=f"ai_{team_name}"):
+                    with st.spinner(f"Analysing {team_name}…"):
+                        try:
+                            ai_text = run_ai_analysis(team_name, fit_score)
+                            st.session_state[cache_key] = ai_text
+                            parse_and_render(ai_text, team_name)
+                        except Exception as e:
+                            st.error(f"AI error: {e}")
