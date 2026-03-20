@@ -173,22 +173,134 @@ def score_col(s):
     if s >= 48: return "#f59e0b"
     return "#ef4444"
 
+# ── LEAGUE PRESETS & REGION MAP (mirrors team_hq.py) ─────────────────
+PRESET_LEAGUES = {
+    "Top 5 Europe":    {"England 1.","Spain 1.","Germany 1.","Italy 1.","France 1."},
+    "Top 20 Europe":   {
+        "England 1.","Spain 1.","Germany 1.","Italy 1.","France 1.",
+        "England 2.","Portugal 1.","Belgium 1.","Turkey 1.","Germany 2.",
+        "Spain 2.","France 2.","Netherlands 1.","Austria 1.","Switzerland 1.",
+        "Denmark 1.","Croatia 1.","Italy 2.","Czech 1.","Norway 1.",
+    },
+    "EFL (England 2–4)": {"England 2.","England 3.","England 4."},
+}
+
+COUNTRY_TO_REGION = {
+    "England":"Europe","Spain":"Europe","Germany":"Europe","Italy":"Europe","France":"Europe",
+    "Belgium":"Europe","Portugal":"Europe","Netherlands":"Europe","Croatia":"Europe",
+    "Switzerland":"Europe","Norway":"Europe","Sweden":"Europe","Denmark":"Europe",
+    "Czech":"Europe","Greece":"Europe","Austria":"Europe","Hungary":"Europe",
+    "Romania":"Europe","Scotland":"Europe","Slovenia":"Europe","Slovakia":"Europe",
+    "Ukraine":"Europe","Bulgaria":"Europe","Serbia":"Europe","Poland":"Europe",
+    "Russia":"Europe","Turkey":"Asia","Israel":"Europe","Cyprus":"Europe",
+    "Finland":"Europe","Ireland":"Europe","Albania":"Europe","Bosnia":"Europe",
+    "Kosovo":"Europe","Armenia":"Europe","Georgia":"Europe","Iceland":"Europe",
+    "Latvia":"Europe","Montenegro":"Europe","Estonia":"Europe",
+    "Northern Ireland":"Europe","Wales":"Europe","Kazakhstan":"Europe",
+    "Moldova":"Europe","Lithuania":"Europe","Malta":"Europe",
+    "Australia":"Oceania","Japan":"Asia","Korea":"Asia","China":"Asia",
+    "Azerbaijan":"Asia","Brazil":"South America","Argentina":"South America",
+    "Colombia":"South America","Ecuador":"South America","Uruguay":"South America",
+    "Chile":"South America","Venezuela":"South America",
+    "USA":"North America","Mexico":"North America",
+    "Morocco":"Africa","Tunisia":"Africa","South Africa":"Africa","Egypt":"Africa",
+}
+
+def _league_country(lg: str) -> str:
+    import re as _re
+    return _re.sub(r"\s*\d+\.?\s*$", "", str(lg)).strip().rstrip(".")
+
+def _league_region(lg: str) -> str:
+    return COUNTRY_TO_REGION.get(_league_country(lg), "Other")
+
 # ── SIDEBAR ───────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown('<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:1.3rem;font-weight:800;color:#3b82f6;padding:10px 0 2px 0">🏟️ CLUB FIT</div>', unsafe_allow_html=True)
     st.markdown('<div style="color:#64748b;font-size:.76rem;margin-bottom:14px">Football Intelligence Platform</div>', unsafe_allow_html=True)
+
     st.markdown("**Upload Data**")
     player_files = st.file_uploader("Player CSVs", type="csv", accept_multiple_files=True)
     team_file    = st.file_uploader("Team Stats CSV", type="csv")
     st.markdown("---")
     api_key = st.text_input("Anthropic API Key (AI Analysis)", type="password")
     st.markdown("---")
-    min_ls = st.slider("Min league strength", 0, 100, 0)
-    max_ls = st.slider("Max league strength", 0, 100, 100)
+
+    # ── Candidate league filtering ────────────────────────────────────
+    st.markdown("**Candidate Leagues**")
+    st.caption("Controls which clubs appear in results. Player can be from any league.")
+
+    # We need player_df to build league list — load it early for sidebar use
+    # (cached so no performance cost when called again below)
+    @st.cache_data(show_spinner=False)
+    def _get_leagues(files):
+        if not files: return []
+        dfs = []
+        for f in files:
+            try:
+                df = pd.read_csv(f)
+                if 'League' in df.columns:
+                    dfs.append(df[['League']].dropna())
+            except: pass
+        if not dfs: return []
+        return sorted(pd.concat(dfs)['League'].unique().tolist())
+
+    _all_lgs = _get_leagues(tuple(player_files) if player_files else ())
+
+    # Regions
+    _all_regions = sorted({_league_region(lg) for lg in _all_lgs}) if _all_lgs else []
+    sel_regions = st.multiselect("Regions", _all_regions, default=_all_regions, key="cf_regions")
+    _region_lgs = [lg for lg in _all_lgs if _league_region(lg) in sel_regions]
+
+    # Presets
+    st.markdown("##### League Presets")
+    _pc1, _pc2, _pc3 = st.columns(3)
+    use_top5  = _pc1.checkbox("Top 5",  False, key="cf_top5")
+    use_top20 = _pc2.checkbox("Top 20", False, key="cf_top20")
+    use_efl   = _pc3.checkbox("EFL",    False, key="cf_efl")
+
+    # Build seed from presets — match with/without trailing dot
+    _seed = set()
+    if use_top5:  _seed |= PRESET_LEAGUES["Top 5 Europe"]
+    if use_top20: _seed |= PRESET_LEAGUES["Top 20 Europe"]
+    if use_efl:   _seed |= PRESET_LEAGUES["EFL (England 2–4)"]
+
+    # Match preset names to actual league names in data (handles trailing dot differences)
+    def _match_preset(seed_set, available):
+        matched = set()
+        for lg in available:
+            lg_norm = lg.strip().rstrip('.')
+            for s in seed_set:
+                if s.strip().rstrip('.').lower() == lg_norm.lower():
+                    matched.add(lg)
+        return matched
+
+    _seed_matched = _match_preset(_seed, _region_lgs)
+    _default_lgs  = sorted(_seed_matched) if _seed_matched else _region_lgs
+
+    # Reset league selection when presets change
+    _preset_sig = (tuple(sorted(sel_regions)), use_top5, use_top20, use_efl)
+    if st.session_state.get("cf_preset_sig") != _preset_sig:
+        st.session_state["cf_preset_sig"]  = _preset_sig
+        st.session_state["cf_leagues_sel"] = _default_lgs
+
+    cand_leagues = st.multiselect(
+        "Candidate leagues",
+        _region_lgs,
+        default=st.session_state.get("cf_leagues_sel", _default_lgs),
+        key="cf_leagues_sel",
+    )
+
+    st.markdown("---")
+    st.markdown("**Scoring Weights**")
     league_weight = st.slider("League quality weight", 0.0, 1.0, 0.35, 0.05)
     market_weight = st.slider("Market value weight",   0.0, 1.0, 0.20, 0.05)
-    min_mins      = st.slider("Min minutes (candidates)", 0, 3000, 500, 100)
-    top_n         = st.number_input("Results to show", 5, 50, 10, 5)
+
+    st.markdown("**Filters**")
+    min_ls   = st.slider("Min league strength", 0, 101, 0)
+    max_ls   = st.slider("Max league strength", 0, 101, 101)
+    min_mins = st.slider("Min minutes (candidates)", 0, 3000, 500, 100)
+    top_n    = st.number_input("Results to show", 5, 50, 10, 5)
+
     st.markdown("---")
     st.markdown("**Image Export**")
     img_theme  = st.radio("Theme",  ["Light", "Dark"], index=0, horizontal=True, key="img_theme")
@@ -347,8 +459,6 @@ sel_styles = st.multiselect("Select styles (combine any)", all_styles,
 with st.expander("⚙️ Advanced Settings", expanded=False):
     ac1, ac2 = st.columns(2)
     with ac1:
-        all_lgs  = sorted(player_df['League'].dropna().unique().tolist())
-        cand_lgs = st.multiselect("Candidate leagues", all_lgs, default=all_lgs)
         max_age  = st.slider("Max candidate age", 16, 45, 40)
     with ac2:
         mv_override      = st.number_input("MV override (£)", 0, 100_000_000, 0, 500_000)
@@ -371,8 +481,8 @@ if not run:
 with st.spinner("Computing…"):
 
     cand = player_df.copy()
-    if cand_lgs:
-        cand = cand[cand['League'].isin(cand_lgs)]
+    if cand_leagues:
+        cand = cand[cand['League'].isin(cand_leagues)]
     if '_pg' in cand.columns:
         cand = cand[cand['_pg'] == pg]
     cand = cand[cand['Minutes played'].fillna(0) >= min_mins]
