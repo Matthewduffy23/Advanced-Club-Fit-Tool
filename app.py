@@ -20,16 +20,17 @@ section[data-testid="stSidebar"]{background:#0d1117!important;border-right:1px s
 label,p,span,div,[data-testid="stWidgetLabel"] p,.stMarkdown p{color:#e2e8f0!important;}
 .stSelectbox>div>div,.stMultiSelect>div>div{background:#111827!important;border-color:#1e2d42!important;}
 input,textarea{background:#111827!important;color:#e2e8f0!important;border-color:#1e2d42!important;}
-/* Multiselect dropdown options — black text on white background */
-[data-baseweb="popover"] ul li{color:#000000!important;background:#ffffff!important;}
-[data-baseweb="popover"] ul li:hover{background:#e8f0fe!important;color:#000000!important;}
-[data-baseweb="menu"] [role="option"]{color:#000000!important;background:#ffffff!important;}
-[data-baseweb="select"] [role="option"]{color:#000000!important;}
-/* Selected tags — white text, visible background */
+/* Multiselect & selectbox dropdown — black text, dark checkmarks */
+[data-baseweb="popover"],[data-baseweb="popover"] *{color:#000000!important;}
+[data-baseweb="popover"] ul li{background:#ffffff!important;}
+[data-baseweb="popover"] ul li:hover{background:#dbeafe!important;}
+[data-baseweb="menu"],[data-baseweb="menu"] *{color:#000000!important;background:#ffffff!important;}
+[data-baseweb="menu"] [aria-selected="true"]{background:#dbeafe!important;}
+[data-baseweb="menu"] svg{fill:#000000!important;color:#000000!important;}
+/* Selected tags — blue background, white text */
 [data-baseweb="tag"]{background:#2563eb!important;border:none!important;}
-[data-baseweb="tag"] span{color:#ffffff!important;font-weight:600!important;}
-[data-baseweb="tag"] [role="presentation"]{color:#ffffff!important;}
-/* Style pill tags */
+[data-baseweb="tag"] span,[data-baseweb="tag"] *{color:#ffffff!important;font-weight:600!important;}
+/* Style pill tags in main area */
 .pill{display:inline-block;background:#2563eb!important;border:1px solid #3b82f6!important;border-radius:5px;padding:2px 8px;font-size:.75rem;color:#ffffff!important;margin:2px;}
 .stButton>button{background:#3b82f6!important;color:#fff!important;border:none!important;font-weight:700!important;border-radius:6px!important;}
 .stButton>button:hover{opacity:.85!important;}
