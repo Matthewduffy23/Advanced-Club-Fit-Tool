@@ -28,15 +28,6 @@ div[data-testid="stExpander"]{background:#111827;border-color:#1e2d42;border-rad
 .pcard .nm{font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:800;color:#fff;}
 .pcard .mt{color:#64748b;font-size:.82rem;margin-top:3px;}
 .sec{font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:700;color:#3b82f6;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid #1e2d42;padding-bottom:5px;margin:18px 0 10px 0;}
-.rcard{background:#111827;border:1px solid #1e2d42;border-radius:10px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:14px;}
-.rcard:hover{border-color:#3b82f6;}
-.rrank{font-family:'Barlow Condensed',sans-serif;font-size:1.6rem;font-weight:800;color:#374151;min-width:32px;}
-.rrank.top{color:#f59e0b;}
-.rteam{font-family:'Barlow Condensed',sans-serif;font-size:1.1rem;font-weight:700;color:#fff;flex:1;}
-.rleague{font-size:.76rem;color:#64748b;}
-.rscore{font-family:'DM Mono',monospace;font-size:1.4rem;min-width:60px;text-align:right;}
-.barwrap{width:90px;height:5px;background:#374151;border-radius:3px;overflow:hidden;margin-top:4px;}
-.barfill{height:100%;border-radius:3px;}
 .acard{background:#0d1117;border:1px solid #1e2d42;border-left:3px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:10px;}
 .acard h4{font-family:'Barlow Condensed',sans-serif;font-size:.95rem;font-weight:700;color:#f59e0b;margin:0 0 6px 0;}
 .acard p{color:#e2e8f0;font-size:.86rem;line-height:1.6;margin:0;}
@@ -198,6 +189,10 @@ with st.sidebar:
     market_weight = st.slider("Market value weight",   0.0, 1.0, 0.20, 0.05)
     min_mins      = st.slider("Min minutes (candidates)", 0, 3000, 500, 100)
     top_n         = st.number_input("Results to show", 5, 50, 10, 5)
+    st.markdown("---")
+    st.markdown("**Image Export**")
+    img_theme  = st.radio("Theme",  ["Light", "Dark"], index=0, horizontal=True, key="img_theme")
+    img_format = st.radio("Format", ["Standard", "1920×1080"], index=0, horizontal=True, key="img_format")
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
@@ -315,7 +310,6 @@ if not run:
 # ── COMPUTE ───────────────────────────────────────────────────────────
 with st.spinner("Computing…"):
 
-    # Candidate pool
     cand = player_df.copy()
     if cand_lgs:
         cand = cand[cand['League'].isin(cand_lgs)]
@@ -329,17 +323,13 @@ with st.spinner("Computing…"):
         st.error("No candidates after filters.")
         st.stop()
 
-    # Numeric conversions
     for f in feats:
         cand[f] = pd.to_numeric(cand[f], errors='coerce').fillna(0)
     tgt_vec = np.array([pd.to_numeric(tgt.get(f, 0), errors='coerce') or 0 for f in feats], dtype=float)
 
-    # Weight vector
     w = np.array([custom_w.get(f, 1) for f in feats], dtype=float)
     w = w / (w.sum() or 1.0)
 
-    # ── Similarity: per-league percentile + z-score blend ────────────
-    # Build reference pool (candidates + target)
     tgt_df = player_df[player_df['Player'] == sel_name].copy()
     for f in feats:
         tgt_df[f] = pd.to_numeric(tgt_df[f], errors='coerce').fillna(0)
@@ -348,18 +338,13 @@ with st.spinner("Computing…"):
                     ignore_index=True)
     pct_mat = ref.groupby('League')[feats].rank(pct=True).fillna(0.5)
 
-    # Target percentile vector
     n_cand = len(cand)
-    tgt_pct = pct_mat.iloc[n_cand:].mean(axis=0).values  # last row(s) = target
-
-    # Candidate percentile matrix
+    tgt_pct = pct_mat.iloc[n_cand:].mean(axis=0).values
     cand_pct = pct_mat.iloc[:n_cand].values
 
-    # Weighted L1 percentile distance
     pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w, axis=1)
     sim_pct  = np.exp(-2.8 * pct_dist) * 100.0
 
-    # Z-score distance
     X_all = np.vstack([cand[feats].values, tgt_vec.reshape(1,-1)])
     sc    = StandardScaler().fit(X_all)
     c_std = sc.transform(cand[feats].values)
@@ -369,11 +354,9 @@ with st.spinner("Computing…"):
 
     cand['_sim'] = sim_pct * 0.5 + sim_act * 0.5
 
-    # Club profiles (average per team)
     grp = cand.groupby('Team')
     club = grp[feats].mean().reset_index()
     club['League'] = grp['League'].agg(lambda x: x.mode().iloc[0])
-    # Market value — fill missing with median so no clubs are dropped
     if 'Market value' in cand.columns:
         mv_series = pd.to_numeric(cand['Market value'], errors='coerce')
         median_mv = mv_series.median() or 2_000_000
@@ -388,17 +371,13 @@ with st.spinner("Computing…"):
         st.error("No clubs with complete data.")
         st.stop()
 
-    # ── Team style score ─────────────────────────────────────────────
     has_team = not team_df.empty and 'Team' in team_df.columns
     style_scores = np.full(len(club), 50.0)
 
     if has_team and sel_styles:
-        # De-duplicate team_df by keeping first occurrence per team
         tdf = team_df.drop_duplicates(subset=['Team']).set_index('Team')
-
         parts = []
 
-        # "Similar to Current System"
         if "Similar to Current System" in sel_styles and tgt_team in tdf.index:
             num_cols = [c for c in tdf.columns if tdf[c].dtype in [float, int] or
                         pd.api.types.is_numeric_dtype(tdf[c])]
@@ -414,7 +393,6 @@ with st.spinner("Computing…"):
                         c_row = tdf_num.loc[team_name].values.reshape(1,-1)
                         c_std2 = sc2.transform(c_row)[0]
                         d = float(np.linalg.norm(c_std2 - t_std2))
-                        # Convert distance to 0-100 score
                         all_d = np.linalg.norm(sc2.transform(tdf_num) - t_std2, axis=1)
                         rng = float(all_d.max() - all_d.min()) or 1.0
                         part.append(float((1 - (d - all_d.min()) / rng) * 100))
@@ -422,7 +400,6 @@ with st.spinner("Computing…"):
                         part.append(50.0)
                 parts.append(np.array(part))
 
-        # Other tactical styles
         for sname in sel_styles:
             if sname == "Similar to Current System": continue
             blend = STYLE_BLENDS.get(sname, {})
@@ -449,7 +426,6 @@ with st.spinner("Computing…"):
         if parts:
             style_scores = np.mean(parts, axis=0)
 
-    # ── Final blend ───────────────────────────────────────────────────
     if sel_styles and has_team:
         combined = (club['SimPct'].values * (1 - style_blend_w) +
                     style_scores * style_blend_w)
@@ -458,7 +434,6 @@ with st.spinner("Computing…"):
 
     club['StyleFit'] = combined
 
-    # League quality
     club['LS'] = club['League'].map(LEAGUE_STRENGTHS).fillna(50.0)
     club = club[(club['LS'] >= min_ls) & (club['LS'] <= max_ls)]
     if club.empty:
@@ -470,7 +445,6 @@ with st.spinner("Computing…"):
     gap   = (club['LS'] - tgt_ls).clip(lower=0)
     adj  *= (1 - gap / 100).clip(lower=0.7)
 
-    # Market value
     tgt_mv = float(mv_override) if mv_override > 0 else float(pd.to_numeric(tgt.get('Market value', 0), errors='coerce') or 2_000_000)
     tgt_mv = max(tgt_mv, 1.0)
     mv_ratio = (club['AvgMV'] / tgt_mv).clip(0.5, 1.5)
@@ -486,37 +460,12 @@ with st.spinner("Computing…"):
     results.insert(0,'Rank', range(1, len(results)+1))
 
 # ── DISPLAY ───────────────────────────────────────────────────────────
-
 st.markdown(f'<div class="sec">Top {int(top_n)} Club Fits — {sel_name}</div>', unsafe_allow_html=True)
 if sel_styles:
     st.markdown("Active styles: " + "".join(f'<span class="pill">{s}</span>' for s in sel_styles),
                 unsafe_allow_html=True)
 
-# ── Live table
-for _, row in results.iterrows():
-    rank = int(row['Rank'])
-    fc   = score_col(float(row['FinalFit']))
-    bw   = min(int(row['FinalFit']), 100)
-    gold = rank <= 3
-    st.markdown(f"""
-<div style="display:flex;align-items:center;gap:14px;background:#111827;
-  border:1px solid #1e2d42;border-radius:10px;padding:12px 16px;margin-bottom:8px;">
-  <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:800;
-    color:{'#f59e0b' if gold else '#374151'};min-width:34px;">#{rank}</div>
-  <div style="flex:1">
-    <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.15rem;
-      font-weight:700;color:#fff;">{row['Team']}</div>
-    <div style="font-size:.76rem;color:#64748b;margin-top:1px;">{row['League']}</div>
-    <div style="width:100%;height:4px;background:#1e2d42;border-radius:2px;margin-top:6px;">
-      <div style="width:{bw}%;height:100%;background:{fc};border-radius:2px;"></div>
-    </div>
-  </div>
-  <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.9rem;
-    font-weight:800;color:{fc};min-width:58px;text-align:right;">{row['FinalFit']:.0f}<span style="font-size:.85rem;color:#374151">%</span></div>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
+# ── Badge fetching ────────────────────────────────────────────────────
 try:
     from team_fotmob_urls import FOTMOB_TEAM_URLS as _FU
 except Exception:
@@ -534,121 +483,213 @@ def _badge(team):
         return plt.imread(io.BytesIO(r.content))
     except: return None
 
-# ── Ranking image — matches reference layout exactly
-def make_ranking_img(df_show, player_name, active_styles):
+# ── Ranking image ─────────────────────────────────────────────────────
+def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_mode="Standard (auto)"):
     if df_show.empty: return None
 
-    BG    = "#0a0e1a"
-    ROW_A = "#0f1628"
-    ROW_B = "#0d1422"
-    TXT   = "#ffffff"
-    SUB   = "#8899b8"
-    DIV   = "#1a2640"
-    BAR_BG= "#1a2540"
-    BAR_FG= "#3b82f6"
-    GOLD  = "#f59e0b"
-    RK_BG = "#111a30"
+    # ── Theme palettes ────────────────────────────────────────────────
+    if theme == "Dark":
+        BG        = "#0a0f1c"
+        ROW_A     = "#0f1628"
+        ROW_B     = "#0d1422"
+        TXT       = "#ffffff"
+        SUB       = "#b8c0cf"
+        FOOT      = "#9aa6bd"
+        DIV       = "#23304a"
+        BAR_BG    = "#1a2540"
+        BAR_FG    = "#6b7cff"
+        RANK_BG   = "#111a2e"
+        RANK_EDGE = "#2b3a5a"
+        HDR_ACCENT = "#3b82f6"
+    else:  # Light
+        BG        = "#ffffff"
+        ROW_A     = "#f8fafc"
+        ROW_B     = "#ffffff"
+        TXT       = "#0f172a"
+        SUB       = "#475569"
+        FOOT      = "#94a3b8"
+        DIV       = "#cbd5e1"
+        BAR_BG    = "#e2e8f0"
+        BAR_FG    = "#3b82f6"
+        RANK_BG   = "#f1f5f9"
+        RANK_EDGE = "#94a3b8"
+        HDR_ACCENT = "#2563eb"
 
-    N = len(df_show)
-    W_IN = 6.7           # inches wide
-    ROW_H = 1.05         # inches per row
-    HDR_H = 1.5          # header
-    FT_H  = 0.45         # footer
+    GOLD = "#f59e0b"
+    N    = len(df_show)
+
+    # ── 1920×1080 banner ──────────────────────────────────────────────
+    if export_mode == "1920×1080 (banner)":
+        DPI = 100
+        fig = plt.figure(figsize=(19.2, 10.8), dpi=DPI)
+        ax  = fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+        ax.add_patch(Rectangle((0, 0), 1, 1, color=BG, zorder=0))
+        if theme == "Light":
+            ax.add_patch(Rectangle((0, 0), 1, 1,
+                                    fill=False, edgecolor="#cbd5e1", linewidth=2, zorder=10))
+
+        LEFT, RIGHT = 0.045, 0.955
+
+        # Header
+        ax.text(LEFT, 0.972, "CLUB FIT FINDER",
+                fontsize=48, fontweight="bold", color=TXT, ha="left", va="top")
+        ax.text(LEFT, 0.912, player_name.upper(),
+                fontsize=34, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
+        style_str = "  ·  ".join(active_styles) if active_styles else ""
+        if style_str:
+            ax.text(LEFT, 0.870, style_str, fontsize=20, color=SUB, ha="left", va="top")
+        ax.plot([LEFT, RIGHT], [0.835, 0.835], color=DIV, lw=2.2)
+        ax.plot([LEFT, RIGHT], [0.040, 0.040], color=DIV, lw=2.2)
+        ax.text(LEFT, 0.022,
+                "Final Fit % = Player Similarity · League Quality · Market Value",
+                fontsize=13, color=FOOT, ha="left", va="top")
+
+        ROW_TOP = 0.813; ROW_BOT = 0.050
+        row_gap = (ROW_TOP - ROW_BOT) / float(N)
+        row_h   = row_gap * 0.92
+        RANK_X  = LEFT + 0.024; CREST_X = LEFT + 0.105; NAME_X = LEFT + 0.175
+        BAR_L   = LEFT + 0.62;  BAR_R   = RIGHT - 0.14
+        BAR_W   = BAR_R - BAR_L; BAR_H2  = row_h * 0.26; VAL_X  = RIGHT - 0.025
+        max_v   = float(df_show['FinalFit'].max()) or 1.0
+
+        for i, (_, row) in enumerate(df_show.iterrows()):
+            y  = ROW_TOP - (i + 0.5) * row_gap
+            ax.add_patch(Rectangle((LEFT, y - row_h / 2), RIGHT - LEFT, row_h,
+                                    color=(ROW_A if i % 2 == 0 else ROW_B), zorder=1))
+
+            # Rank badge
+            is_top3   = i < 3
+            edge_col  = GOLD if is_top3 else RANK_EDGE
+            rank_col  = GOLD if is_top3 else TXT
+            ax.scatter([RANK_X], [y], s=1320, facecolor=RANK_BG,
+                       edgecolor=edge_col, linewidths=2.2, zorder=4)
+            ax.text(RANK_X, y, str(i + 1), fontsize=16, fontweight="bold",
+                    color=rank_col, ha="center", va="center", zorder=5)
+
+            bdg = _badge(str(row['Team']))
+            if bdg is not None:
+                h, w2 = bdg.shape[:2]; z = 52.0 / max(h, w2)
+                ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=z),
+                              (CREST_X, y), frameon=False, zorder=5))
+
+            ax.text(NAME_X, y + row_h * 0.18, str(row['Team']).upper(),
+                    fontsize=28, fontweight="bold", color=TXT, ha="left", va="center", zorder=6)
+            ax.text(NAME_X, y - row_h * 0.22, str(row['League']),
+                    fontsize=19, color=SUB, ha="left", va="center", zorder=6)
+
+            frac = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
+            ax.add_patch(Rectangle((BAR_L, y - BAR_H2 / 2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
+            ax.add_patch(Rectangle((BAR_L, y - BAR_H2 / 2), BAR_W * frac, BAR_H2, color=BAR_FG, zorder=3))
+
+            fc = score_col(float(row['FinalFit']))
+            ax.text(VAL_X, y, f"{row['FinalFit']:.0f}",
+                    fontsize=29, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
+        plt.close(fig); buf.seek(0)
+        return buf.getvalue()
+
+    # ── Standard (auto-height) ────────────────────────────────────────
+    W_IN  = 7.2
+    ROW_H = 1.10
+    HDR_H = 1.65
+    FT_H  = 0.55
     TOT_H = HDR_H + N * ROW_H + FT_H
+    DPI   = 180
 
-    DPI = 150
     fig = plt.figure(figsize=(W_IN, TOT_H), dpi=DPI)
     ax  = fig.add_axes([0, 0, 1, 1])
-    ax.set_xlim(0, W_IN)
-    ax.set_ylim(0, TOT_H)
-    ax.axis("off")
+    ax.set_xlim(0, W_IN); ax.set_ylim(0, TOT_H); ax.axis("off")
     ax.add_patch(Rectangle((0, 0), W_IN, TOT_H, color=BG, zorder=0))
+    # Subtle border so light image doesn't bleed into white page
+    if theme == "Light":
+        ax.add_patch(Rectangle((0, 0), W_IN, TOT_H,
+                                fill=False, edgecolor="#cbd5e1", linewidth=1.5, zorder=10))
 
-    # ── Header
-    ty = TOT_H - 0.18
-    ax.text(0.26, ty, "CLUB FIT FINDER",
-            fontsize=15, fontweight="bold", color=TXT, ha="left", va="top",
-            fontfamily="DejaVu Sans")
-    ax.text(0.26, ty - 0.32, player_name.upper(),
-            fontsize=12, fontweight="bold", color="#3b82f6", ha="left", va="top")
+    # Header
+    ty = TOT_H - 0.20
+    ax.text(0.30, ty, "CLUB FIT FINDER",
+            fontsize=16, fontweight="bold", color=TXT, ha="left", va="top")
+    ax.text(0.30, ty - 0.36, player_name.upper(),
+            fontsize=13, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
     style_str = "  ·  ".join(active_styles) if active_styles else ""
     if style_str:
-        ax.text(0.26, ty - 0.60, style_str,
-                fontsize=9, color=SUB, ha="left", va="top")
+        ax.text(0.30, ty - 0.65, style_str, fontsize=9, color=SUB, ha="left", va="top")
+
     base_y = TOT_H - HDR_H
-    ax.plot([0.15, W_IN - 0.15], [base_y + 0.08] * 2, color=DIV, lw=0.8)
+    ax.plot([0.18, W_IN - 0.18], [base_y + ROW_H * 0.08] * 2, color=DIV, lw=0.9)
+
+    BAR_X = W_IN - 2.50; BAR_W = 1.55; VAL_X = W_IN - 0.25
+    ax.text(BAR_X + BAR_W / 2, base_y - 0.04, "FIT",
+            fontsize=8, color=SUB, ha="center", va="top")
+    ax.text(VAL_X, base_y - 0.04, "SCORE",
+            fontsize=8, color=SUB, ha="right", va="top")
 
     max_v = float(df_show['FinalFit'].max()) or 1.0
 
     for i, (_, row) in enumerate(df_show.iterrows()):
-        y = base_y - (i + 0.5) * ROW_H
+        y  = base_y - (i + 0.5) * ROW_H
         bg = ROW_A if i % 2 == 0 else ROW_B
-        ax.add_patch(Rectangle((0.12, y - ROW_H/2), W_IN - 0.24, ROW_H,
+        ax.add_patch(Rectangle((0.14, y - ROW_H / 2), W_IN - 0.28, ROW_H,
                                 color=bg, zorder=1))
 
         # Rank badge
-        is_top3 = i < 3
-        badge_col = GOLD if is_top3 else "#2a3a55"
-        circle = plt.Circle((0.38, y), 0.30, color=RK_BG, zorder=3)
+        is_top3   = i < 3
+        edge_col  = GOLD if is_top3 else RANK_EDGE
+        rank_color = GOLD if is_top3 else TXT
+        circle = plt.Circle((0.42, y), 0.32, color=RANK_BG, zorder=3)
         ax.add_patch(circle)
-        ax.plot(*plt.Circle((0.38, y), 0.30).get_data() if False else
-               ([0.38 + 0.30 * np.cos(t) for t in np.linspace(0, 2*np.pi, 100)],
-                [y    + 0.30 * np.sin(t) for t in np.linspace(0, 2*np.pi, 100)]),
-               color=badge_col, lw=1.5, zorder=4)
-        ax.text(0.38, y, str(i + 1), fontsize=10, fontweight="bold",
-                color=GOLD if is_top3 else TXT,
-                ha="center", va="center", zorder=5)
+        theta = np.linspace(0, 2 * np.pi, 120)
+        ax.plot(0.42 + 0.32 * np.cos(theta), y + 0.32 * np.sin(theta),
+                color=edge_col, lw=1.6, zorder=4)
+        ax.text(0.42, y, str(i + 1), fontsize=11, fontweight="bold",
+                color=rank_color, ha="center", va="center", zorder=5)
 
-        # Badge
+        # Club badge
         bdg = _badge(str(row['Team']))
         if bdg is not None:
             h, w2 = bdg.shape[:2]
-            zoom = 0.42 / max(h, w2) * DPI
-            ax.add_artist(AnnotationBbox(
-                OffsetImage(bdg, zoom=zoom),
-                (0.95, y), frameon=False, zorder=5))
+            zoom = 0.46 / max(h, w2) * DPI
+            ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=zoom),
+                          (1.02, y), frameon=False, zorder=5))
 
-        # Team name + sub
-        ax.text(1.25, y + 0.18, str(row['Team']).upper(),
-                fontsize=11.5, fontweight="bold", color=TXT,
+        # Team name & league
+        name_x = 1.42
+        ax.text(name_x, y + 0.20, str(row['Team']).upper(),
+                fontsize=12.5, fontweight="bold", color=TXT,
                 ha="left", va="center", zorder=5)
-        ax.text(1.25, y - 0.15,
-                f"{row['League']}  ·  Strength {row['LS']:.0f}  ·  Avg MV {fmt_mv(row['AvgMV'])}",
-                fontsize=7.5, color=SUB, ha="left", va="center", zorder=5)
+        ax.text(name_x, y - 0.18, str(row['League']),
+                fontsize=8.5, color=SUB, ha="left", va="center", zorder=5)
 
-        # Sim label above bar
-        BAR_X = W_IN - 2.35
-        BAR_W = 1.50
-        BAR_H2 = 0.14
-        ax.text(BAR_X + BAR_W, y + 0.22,
-                f"sim {row['SimPct']:.0f}%",
-                fontsize=7.5, color=SUB, ha="right", va="center", zorder=5)
-        # Bar
-        frac = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
-        ax.add_patch(Rectangle((BAR_X, y - BAR_H2/2), BAR_W, BAR_H2,
-                                color=BAR_BG, zorder=2))
-        ax.add_patch(Rectangle((BAR_X, y - BAR_H2/2), BAR_W * frac, BAR_H2,
-                                color=BAR_FG, zorder=3))
+        # Fit bar
+        BAR_H2 = 0.16
+        frac   = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
+        ax.add_patch(Rectangle((BAR_X, y - BAR_H2 / 2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
+        ax.add_patch(Rectangle((BAR_X, y - BAR_H2 / 2), BAR_W * frac, BAR_H2, color=BAR_FG, zorder=3))
 
         # Score
         fc = score_col(float(row['FinalFit']))
-        ax.text(W_IN - 0.22, y, f"{row['FinalFit']:.0f}",
-                fontsize=18, fontweight="bold", color=fc,
+        ax.text(VAL_X, y, f"{row['FinalFit']:.0f}",
+                fontsize=20, fontweight="bold", color=fc,
                 ha="right", va="center", zorder=6)
 
     # Footer
-    ax.plot([0.15, W_IN - 0.15], [FT_H + 0.05] * 2, color=DIV, lw=0.6)
-    ax.text(0.26, FT_H - 0.05,
-            "Final Fit % = Player Similarity · League Quality · Market Value realism",
-            fontsize=7.5, color=SUB, ha="left", va="top")
+    ax.plot([0.18, W_IN - 0.18], [FT_H + 0.10] * 2, color=DIV, lw=0.7)
+    ax.text(0.30, FT_H - 0.02,
+            "Final Fit % = Player Similarity · League Quality · Market Value",
+            fontsize=8, color=FOOT, ha="left", va="top")
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=DPI, facecolor=BG, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
+    plt.close(fig); buf.seek(0)
     return buf.getvalue()
 
-rank_img = make_ranking_img(results, sel_name, sel_styles)
+
+rank_img = make_ranking_img(results, sel_name, sel_styles,
+                             theme=img_theme,
+                             export_mode="1920×1080 (banner)" if img_format == "1920×1080" else "Standard (auto)")
 if rank_img:
     st.image(rank_img, use_column_width=True)
     st.download_button("⬇️ Download Ranking Image", rank_img,
@@ -660,7 +701,7 @@ csv_out = results.rename(columns={
 st.download_button("⬇️ Download CSV", csv_out,
     f"club_fit_{sel_name.replace(' ','_')}.csv", "text/csv")
 
-# ── AI SQUAD ANALYSIS — per club expander ────────────────────────────
+# ── AI SQUAD ANALYSIS ─────────────────────────────────────────────────
 st.markdown("---")
 st.markdown('<div class="sec">🤖 AI Squad Analysis</div>', unsafe_allow_html=True)
 
@@ -692,7 +733,6 @@ else:
                     f"{p.get('Player','?')} ({g}, {p.get('Minutes played',0):.0f}mins, "
                     f"MV {fmt_mv(p.get('Market value',0))})")
 
-        # High value players who might leave
         high_val = squad.sort_values('Market value', ascending=False).head(5)
         high_val_str = "; ".join(
             f"{r.get('Player','?')} {fmt_mv(r.get('Market value',0))}"
@@ -764,7 +804,6 @@ FIT VERDICT: SIGN / MONITOR / PASS with one decisive reason tied to the {fit_pct
     for _, row in results.iterrows():
         team_name = row['Team']
         fit_score = row['FinalFit']
-        fc = score_col(float(fit_score))
         with st.expander(
             f"#{int(row['Rank'])}  {team_name}  ·  {row['League']}  ·  "
             f"Fit {fit_score:.0f}%", expanded=False):
