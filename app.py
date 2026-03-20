@@ -721,6 +721,25 @@ with st.spinner("Computing…"):
     results['League']   = results['League'].fillna('Unknown')
     results.insert(0, 'Rank', range(1, len(results) + 1))
 
+    # Persist results and context so download button reruns don't wipe them
+    st.session_state['cf_results']     = results
+    st.session_state['cf_sel_name']    = sel_name
+    st.session_state['cf_sel_styles']  = sel_styles
+    st.session_state['cf_img_params']  = dict(
+        pg=pg, tgt_league=tgt_league, tgt_ls=tgt_ls,
+        league_weight=league_weight, market_weight=market_weight,
+        min_mins=min_mins, top_n=int(top_n), sel_styles=sel_styles,
+    )
+
+# ── Restore from session state if rerun without compute ──────────────
+if 'cf_results' not in st.session_state:
+    st.stop()
+
+results    = st.session_state['cf_results']
+sel_name   = st.session_state['cf_sel_name']
+sel_styles = st.session_state['cf_sel_styles']
+_ip        = st.session_state['cf_img_params']
+
 # ── DISPLAY ───────────────────────────────────────────────────────────
 st.markdown(f'<div class="sec">Top {int(top_n)} Club Fits — {sel_name}</div>', unsafe_allow_html=True)
 if sel_styles:
@@ -949,24 +968,30 @@ rank_img = make_ranking_img(
     results, sel_name, sel_styles,
     theme=img_theme,
     export_mode="1920×1080 (banner)" if img_format == "1920×1080" else "Standard (auto)",
-    pg=pg,
-    tgt_league=tgt_league,
-    tgt_ls=tgt_ls,
-    league_weight=league_weight,
-    market_weight=market_weight,
-    min_mins=min_mins,
-    top_n=int(top_n),
-    sel_styles=sel_styles,
+    pg=_ip['pg'],
+    tgt_league=_ip['tgt_league'],
+    tgt_ls=_ip['tgt_ls'],
+    league_weight=_ip['league_weight'],
+    market_weight=_ip['market_weight'],
+    min_mins=_ip['min_mins'],
+    top_n=_ip['top_n'],
+    sel_styles=_ip['sel_styles'],
 )
+# Cache image so download button rerun doesn't regenerate or lose it
 if rank_img:
-    st.image(rank_img, use_column_width=True)
-    st.download_button("⬇️ Download Ranking Image", rank_img,
+    st.session_state['cf_rank_img'] = rank_img
+if st.session_state.get('cf_rank_img'):
+    st.image(st.session_state['cf_rank_img'], use_column_width=True)
+    st.download_button("⬇️ Download Ranking Image",
+                       st.session_state['cf_rank_img'],
                        f"club_fit_{sel_name.replace(' ','_')}.png", "image/png")
 
 csv_out = results.rename(columns={
     'SimPct':'Similarity %','FinalFit':'Final Fit %','AvgMV':'Avg MV','LS':'League Strength'
 }).to_csv(index=False).encode()
-st.download_button("⬇️ Download CSV", csv_out,
+st.session_state['cf_csv'] = csv_out
+st.download_button("⬇️ Download CSV",
+    st.session_state['cf_csv'],
     f"club_fit_{sel_name.replace(' ','_')}.csv", "text/csv")
 
 # ── AI SQUAD ANALYSIS ─────────────────────────────────────────────────
