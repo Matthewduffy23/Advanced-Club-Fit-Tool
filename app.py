@@ -714,7 +714,7 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     # ── Standard — exact team_hq.py layout (normalised 0–1 coords) ───
     ROW_H    = 0.82
     HEADER_H = 1.70
-    FOOT_H   = 1.10
+    FOOT_H   = 0.80
     TOTAL_H  = HEADER_H + N * ROW_H + FOOT_H
     DPI     = 220
 
@@ -785,11 +785,17 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         ax.text(VAL_X, y, f"{row['FinalFit']:.0f}",
                 fontsize=16, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
 
-    # ── Footer: plain-English auto-summary ───────────────────────────
-    foot_top = FOOT_H - 0.05
-    ax.plot([LEFT, RIGHT], [foot_top + 0.72]*2, color=DIV, lw=0.9, zorder=2)
+    # ── Footer: anchored just below the last row ─────────────────────
+    # Last row bottom edge = base_y - (N-1)*ROW_H - ROW_H/2
+    last_row_bottom = base_y - (N - 1) * ROW_H - ROW_H / 2
+    div_y    = last_row_bottom - 0.10   # divider line
+    line1_y  = div_y - 0.08
+    line2_y  = line1_y - 0.20
+    line3_y  = line2_y - 0.20
 
-    _named_styles  = [s for s in (sel_styles or []) if s != "Similar to Current System"]
+    ax.plot([LEFT, RIGHT], [div_y]*2, color=DIV, lw=0.9, zorder=2)
+
+    _named_styles = [s for s in (sel_styles or []) if s != "Similar to Current System"]
     _lw_pct  = int(round(league_weight * 100))
     _mv_pct  = int(round(market_weight * 100))
     _sim_pct = max(0, 100 - _lw_pct - _mv_pct)
@@ -797,14 +803,14 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     summary_line1 = (f"Ranked by: {_sim_pct}% player profile match ({pg}), "
                      f"{_lw_pct}% league quality, {_mv_pct}% market value. "
                      f"{min_mins}+ mins only.")
-    summary_line2 = (f"League quality vs {tgt_league} (strength {tgt_ls:.0f}/100).")
+    summary_line2 = f"League quality vs {tgt_league} (strength {tgt_ls:.0f}/100)."
     summary_line3 = (f"Style filters ({', '.join(_named_styles)}): top 40% within own league required."
                      if _named_styles else "")
 
-    ax.text(LEFT, foot_top + 0.62, summary_line1, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
-    ax.text(LEFT, foot_top + 0.42, summary_line2, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
+    ax.text(LEFT, line1_y, summary_line1, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
+    ax.text(LEFT, line2_y, summary_line2, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
     if summary_line3:
-        ax.text(LEFT, foot_top + 0.22, summary_line3, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
+        ax.text(LEFT, line3_y, summary_line3, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=DPI, facecolor=BG, bbox_inches="tight")
