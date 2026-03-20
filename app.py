@@ -394,24 +394,58 @@ with st.spinner("Computing…"):
     for f in feats:
         tgt_df[f] = pd.to_numeric(tgt_df[f], errors='coerce').fillna(0)
 
+    # ── Percentile similarity (within-league) ─────────────────────────
     ref = pd.concat([cand[feats + ['League']], tgt_df[feats + ['League']].head(1)],
                     ignore_index=True)
     pct_mat = ref.groupby('League')[feats].rank(pct=True).fillna(0.5)
 
-    n_cand = len(cand)
-    tgt_pct = pct_mat.iloc[n_cand:].mean(axis=0).values
+    n_cand   = len(cand)
+    tgt_pct  = pct_mat.iloc[n_cand:].mean(axis=0).values
     cand_pct = pct_mat.iloc[:n_cand].values
 
     pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w, axis=1)
     sim_pct  = np.exp(-2.8 * pct_dist) * 100.0
 
-    X_all = np.vstack([cand[feats].values, tgt_vec.reshape(1,-1)])
-    sc    = StandardScaler().fit(X_all)
-    c_std = sc.transform(cand[feats].values)
-    t_std = sc.transform(tgt_vec.reshape(1,-1))
-    act_dist = np.sum(np.abs(c_std - t_std) * w, axis=1)
-    sim_act  = np.exp(-0.6 * act_dist) * 100.0
+    # ── Z-score similarity (within-league) ────────────────────────────
+    # Fit a separate StandardScaler per league so a Belgian CF is only
+    # z-scored against other Belgian CFs, not the global pool.
+    # The target player is included in their own league's scaler.
+    tgt_league_label = str(tgt.get('League', ''))
+    act_dist = np.zeros(n_cand)
 
+    all_leagues = cand['League'].unique().tolist()
+    if tgt_league_label not in all_leagues:
+        all_leagues = [tgt_league_label] + all_leagues
+
+    for lg in all_leagues:
+        cand_mask = cand['League'] == lg
+        cand_idx  = np.where(cand_mask)[0]
+        if len(cand_idx) == 0:
+            continue
+
+        lg_cand = cand.loc[cand_mask, feats].values
+
+        if lg == tgt_league_label:
+            # Include target in this league's scaler so they're on the same scale
+            lg_all = np.vstack([lg_cand, tgt_vec.reshape(1, -1)])
+        else:
+            lg_all = lg_cand
+
+        if lg_all.shape[0] < 2:
+            # Only one player in this league — can't fit a scaler meaningfully,
+            # fall back to global scale for these candidates
+            global_sc = StandardScaler().fit(
+                np.vstack([cand[feats].values, tgt_vec.reshape(1, -1)]))
+            c_std_lg = global_sc.transform(lg_cand)
+            t_std_lg = global_sc.transform(tgt_vec.reshape(1, -1))
+        else:
+            lg_sc    = StandardScaler().fit(lg_all)
+            c_std_lg = lg_sc.transform(lg_cand)
+            t_std_lg = lg_sc.transform(tgt_vec.reshape(1, -1))
+
+        act_dist[cand_idx] = np.sum(np.abs(c_std_lg - t_std_lg) * w, axis=1)
+
+    sim_act = np.exp(-0.6 * act_dist) * 100.0
     cand['_sim'] = sim_pct * 0.5 + sim_act * 0.5
 
     # Market value on cand before groupby
@@ -447,21 +481,30 @@ with st.spinner("Computing…"):
 
     if has_team and sel_styles:
         tdf = team_df.drop_duplicates(subset=['Team']).set_index('Team')
+
+        # Build a league lookup for teams so style percentiles are within-league
+        team_league_lookup = {}
+        if 'League' in team_df.columns:
+            team_league_lookup = team_df.drop_duplicates(subset=['Team'])\
+                                        .set_index('Team')['League'].to_dict()
+
         parts = []
 
         if "Similar to Current System" in sel_styles and tgt_team in tdf.index:
             num_cols = [c for c in tdf.columns
                         if c != 'Team' and pd.api.types.is_numeric_dtype(tdf[c])]
             if num_cols:
-                tdf_num = tdf[num_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-                sc2     = StandardScaler().fit(tdf_num)
-                t_std2  = sc2.transform(tdf_num.loc[[tgt_team]])[0]
-                all_d   = np.linalg.norm(sc2.transform(tdf_num) - t_std2, axis=1)
-                rng     = float(all_d.max() - all_d.min()) or 1.0
-                part = []
+                tdf_num = tdf[num_cols].apply(pd.to_numeric, errors='coerce')
+                tdf_num = tdf_num.fillna(tdf_num.mean())
+                sc2    = StandardScaler().fit(tdf_num)
+                t_std2 = sc2.transform(tdf_num.loc[[tgt_team]])[0]
+                all_d  = np.linalg.norm(sc2.transform(tdf_num) - t_std2, axis=1)
+                rng    = float(all_d.max() - all_d.min()) or 1.0
+                part   = []
                 for team_name in club_agg['Team']:
                     if team_name in tdf_num.index:
-                        d = float(np.linalg.norm(sc2.transform(tdf_num.loc[[team_name]])[0] - t_std2))
+                        d = float(np.linalg.norm(
+                            sc2.transform(tdf_num.loc[[team_name]])[0] - t_std2))
                         part.append(float((1 - (d - all_d.min()) / rng) * 100))
                     else:
                         part.append(50.0)
@@ -470,25 +513,53 @@ with st.spinner("Computing…"):
         for sname in sel_styles:
             if sname == "Similar to Current System":
                 continue
-            blend     = STYLE_BLENDS.get(sname, {})
-            col_parts = []
+            blend      = STYLE_BLENDS.get(sname, {})
+            col_parts  = []
+            style_pass = np.ones(len(club_agg), dtype=bool)
+
             for col, direction in blend.items():
                 if col not in tdf.columns:
                     continue
-                col_vals = pd.to_numeric(tdf[col], errors='coerce').dropna()
-                if col_vals.empty:
-                    continue
                 part = []
-                for team_name in club_agg['Team']:
-                    if team_name in tdf.index:
-                        v = pd.to_numeric(tdf.loc[team_name, col], errors='coerce')
-                        pct = float((col_vals <= float(v)).mean() * 100) if pd.notna(v) else 50.0
-                        part.append(100 - pct if direction < 0 else pct)
-                    else:
+                for j, team_name in enumerate(club_agg['Team']):
+                    if team_name not in tdf.index:
                         part.append(50.0)
+                        continue
+
+                    v = pd.to_numeric(tdf.loc[team_name, col], errors='coerce')
+                    if pd.isna(v):
+                        part.append(50.0)
+                        continue
+
+                    # ── Within-league percentile ──────────────────────
+                    # Get the league for this club and compare only against
+                    # teams in the same league
+                    club_lg = team_league_lookup.get(team_name, None)
+                    if club_lg and 'League' in team_df.columns:
+                        lg_teams = team_df[team_df['League'] == club_lg]['Team'].tolist()
+                        col_vals = pd.to_numeric(
+                            tdf.loc[tdf.index.isin(lg_teams), col],
+                            errors='coerce').dropna()
+                    else:
+                        # No league info — fall back to global
+                        col_vals = pd.to_numeric(tdf[col], errors='coerce').dropna()
+
+                    if col_vals.empty:
+                        part.append(50.0)
+                        continue
+
+                    pct = float((col_vals <= float(v)).mean() * 100)
+                    effective_pct = (100 - pct) if direction < 0 else pct
+                    if effective_pct < 60.0:
+                        style_pass[j] = False
+                    part.append(effective_pct)
+
                 col_parts.append(np.array(part) * abs(direction))
+
             if col_parts:
-                parts.append(np.mean(col_parts, axis=0))
+                style_arr          = np.mean(col_parts, axis=0)
+                style_arr[~style_pass] = 0.0
+                parts.append(style_arr)
 
         if parts:
             style_scores = np.mean(parts, axis=0)
@@ -721,6 +792,8 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     # Build a plain-English summary of what was used
     _style_desc = "playing style similarity to their current club" if (sel_styles and "Similar to Current System" in sel_styles) else \
                   ("preferred tactical styles (" + ", ".join(sel_styles) + ")" if sel_styles else "tactical style")
+    _named_styles = [s for s in (sel_styles or []) if s != "Similar to Current System"]
+    _constraint_note = (f"Style tags ({', '.join(_named_styles)}) require clubs to be in the top 40% of the dataset for those metrics. ") if _named_styles else ""
     _lw_pct = int(round(league_weight * 100))
     _mv_pct = int(round(market_weight * 100))
     _sim_pct = max(0, 100 - _lw_pct - _mv_pct)
@@ -729,8 +802,9 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         f"statistical profile as a {pg},"
     )
     summary_line2 = (
-        f"{_lw_pct}% league quality compared to {tgt_league} (strength {tgt_ls:.0f}/100), "
+        f"{_lw_pct}% league quality vs {tgt_league} (strength {tgt_ls:.0f}/100), "
         f"{_mv_pct}% squad market value alignment. "
+        f"{_constraint_note}"
         f"Only players with {min_mins}+ mins included."
     )
     ax.text(LEFT, 0.60, summary_line1, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
