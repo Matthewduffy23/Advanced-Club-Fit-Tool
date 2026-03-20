@@ -190,8 +190,8 @@ section[data-testid="stSidebar"] {
   margin: 2px;
 }
 
-/* Streamlit overrides */
-.stSelectbox > div > div { background: var(--card) !important; border-color: var(--border) !important; }
+/* Streamlit overrides — force white labels everywhere */
+.stSelectbox > div > div { background: var(--card) !important; border-color: var(--border) !important; color: var(--off) !important; }
 .stMultiSelect > div > div { background: var(--card) !important; border-color: var(--border) !important; }
 div[data-testid="stExpander"] { background: var(--card); border-color: var(--border); border-radius: 8px; }
 .stButton > button {
@@ -203,8 +203,31 @@ div[data-testid="stExpander"] { background: var(--card); border-color: var(--bor
   font-weight: 600 !important;
 }
 .stButton > button:hover { opacity: 0.85 !important; }
-.stCheckbox > label { color: var(--off) !important; }
+/* All labels, sliders, checkboxes, radio, text — white */
+label, .stCheckbox > label, .stRadio > label, .stSlider > label,
+.stSelectbox > label, .stMultiSelect > label, .stTextInput > label,
+.stNumberInput > label, .stFileUploader > label,
+div[data-testid="stWidgetLabel"] > label,
+div[data-testid="stWidgetLabel"] p,
+.stMarkdown p, .stMarkdown li,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div,
+.stSlider span, .stSlider p,
+[data-testid="stCaptionContainer"] p,
+p, span { color: var(--off) !important; }
+/* Muted is still ok for subtitles */
+.result-league, .player-card .meta { color: #94a3b8 !important; }
+/* Slider track */
 .stSlider > div { color: var(--off) !important; }
+/* Expander header */
+div[data-testid="stExpander"] summary span,
+div[data-testid="stExpander"] summary p { color: var(--off) !important; }
+/* Multiselect tags */
+.stMultiSelect span[data-baseweb="tag"] { background: var(--accent) !important; }
+/* Input fields */
+input, textarea { background: var(--card) !important; color: var(--off) !important; border-color: var(--border) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -228,14 +251,14 @@ LEAGUE_STRENGTHS = {
     'Japan 1.':55.00,'Egypt 1.':40.00,
 }
 
-# Position feature sets from your existing code
+# Per-position feature sets — exactly as defined in the position-specific snippets
 CF_FEATURES = {
     'GK': [
         'Exits per 90','Aerial duels per 90','Aerial duels won, %',
         'Save rate, %','Prevented goals per 90','Passes per 90',
         'Accurate passes, %','Long passes per 90','Accurate long passes, %',
     ],
-    'CB': [
+    'CB': [  # Doc 8
         'Defensive duels per 90','Defensive duels won, %',
         'Aerial duels per 90','Aerial duels won, %','Shots blocked per 90',
         'PAdj Interceptions','Dribbles per 90','Successful dribbles, %',
@@ -245,7 +268,20 @@ CF_FEATURES = {
         'Passes to final third per 90','Accurate passes to final third, %',
         'Progressive passes per 90','Accurate progressive passes, %',
     ],
-    'FB': [
+    'FB': [  # Doc 11
+        'Defensive duels per 90','Defensive duels won, %','Aerial duels per 90',
+        'Aerial duels won, %','PAdj Interceptions',
+        'Non-penalty goals per 90','xG per 90','Shots per 90',
+        'Dribbles per 90','Successful dribbles, %',
+        'Offensive duels per 90','Offensive duels won, %',
+        'Touches in box per 90','Progressive runs per 90','Accelerations per 90',
+        'Passes per 90','Accurate passes, %',
+        'xA per 90','Smart passes per 90',
+        'Passes to final third per 90','Accurate passes to final third, %',
+        'Passes to penalty area per 90','Accurate passes to penalty area, %',
+        'Deep completions per 90',
+    ],
+    'CM': [  # Doc 9
         'Defensive duels per 90','Defensive duels won, %','Aerial duels per 90',
         'Aerial duels won, %','Shots blocked per 90','PAdj Interceptions',
         'Non-penalty goals per 90','xG per 90','Shots per 90',
@@ -258,30 +294,20 @@ CF_FEATURES = {
         'Passes to penalty area per 90','Accurate passes to penalty area, %',
         'Deep completions per 90','Progressive passes per 90',
     ],
-    'CM': [
-        'Defensive duels per 90','Defensive duels won, %','Aerial duels per 90',
-        'Aerial duels won, %','Shots blocked per 90','PAdj Interceptions',
-        'Non-penalty goals per 90','xG per 90','Shots per 90',
-        'Dribbles per 90','Successful dribbles, %','Offensive duels per 90',
-        'Offensive duels won, %','Touches in box per 90','Progressive runs per 90',
-        'Accelerations per 90','Passes per 90','Accurate passes, %',
-        'Forward passes per 90','Accurate forward passes, %','Long passes per 90',
-        'Accurate long passes, %','xA per 90','Smart passes per 90',
-        'Key passes per 90','Passes to final third per 90','Accurate passes to final third, %',
-        'Passes to penalty area per 90','Accurate passes to penalty area, %',
-        'Deep completions per 90','Progressive passes per 90',
-    ],
-    'ATT': [
+    'ATT': [  # Doc 10
         'Defensive duels per 90','Aerial duels per 90','Aerial duels won, %',
         'PAdj Interceptions','Non-penalty goals per 90','xG per 90',
         'Shots per 90','Shots on target, %','Crosses per 90','Accurate crosses, %',
         'Dribbles per 90','Successful dribbles, %','Offensive duels per 90',
-        'Touches in box per 90','Progressive runs per 90','Accelerations per 90',
-        'Passes per 90','Accurate passes, %','xA per 90','Smart passes per 90',
-        'Passes to final third per 90','Passes to penalty area per 90',
-        'Accurate passes to penalty area, %','Deep completions per 90',
+        'Offensive duels won, %','Touches in box per 90','Progressive runs per 90',
+        'Accelerations per 90','Passes per 90','Accurate passes, %',
+        'Forward passes per 90','Accurate forward passes, %','Long passes per 90',
+        'Accurate long passes, %','xA per 90','Smart passes per 90',
+        'Key passes per 90','Passes to final third per 90','Accurate passes to final third, %',
+        'Passes to penalty area per 90','Accurate passes to penalty area, %',
+        'Deep completions per 90','Progressive passes per 90',
     ],
-    'CF': [
+    'CF': [  # From main app
         'Defensive duels per 90','Aerial duels per 90','Aerial duels won, %',
         'PAdj Interceptions','Non-penalty goals per 90','xG per 90',
         'Shots per 90','Shots on target, %','Crosses per 90','Accurate crosses, %',
@@ -293,6 +319,45 @@ CF_FEATURES = {
         'Accurate passes to penalty area, %','Deep completions per 90',
         'Progressive passes per 90',
     ],
+}
+
+# Default weights per position — directly from each snippet's _DEFAULT_W_CF
+DEFAULT_WEIGHTS = {
+    'GK': {
+        'Aerial duels won, %': 3,'Passes per 90': 2,'Accurate passes, %': 2,
+        'Long passes per 90': 2,'Accurate long passes, %': 2,
+    },
+    'CB': {  # Doc 8
+        'Passes per 90': 2,'Accurate passes, %': 2,'Progressive passes per 90': 2,
+        'Defensive duels per 90': 2,'Defensive duels won, %': 2,'Dribbles per 90': 2,
+        'PAdj Interceptions': 1,'Progressive runs per 90': 2,
+        'Aerial duels per 90': 2,'Aerial duels won, %': 3,
+    },
+    'FB': {  # Doc 11
+        'Passes per 90': 2,'Accurate passes, %': 2,'Dribbles per 90': 2,
+        'Non-penalty goals per 90': 2,'Shots per 90': 2,'Successful dribbles, %': 2,
+        'Aerial duels won, %': 2,'xA per 90': 2,'xG per 90': 2,
+        'Touches in box per 90': 2,
+    },
+    'CM': {  # Doc 9
+        'Passes per 90': 3,'Passes to penalty area per 90': 2,'Dribbles per 90': 2,
+        'xA per 90': 2,'Progressive passes per 90': 3,'Defensive duels per 90': 2,
+        'Forward passes per 90': 3,'PAdj Interceptions': 2,
+        'Aerial duels won, %': 2,'Touches in box per 90': 2,
+    },
+    'ATT': {  # Doc 10
+        'Passes per 90': 2,'Progressive runs per 90': 2,'Progressive passes per 90': 2,
+        'Dribbles per 90': 2,'xA per 90': 2,'Touches in box per 90': 2,
+        'Accurate passes, %': 2,'Aerial duels won, %': 2,
+        'Passes to penalty area per 90': 2,'Defensive duels per 90': 2,
+    },
+    'CF': {  # From main app
+        'Passes per 90': 2,'Accurate passes, %': 2,'Dribbles per 90': 3,
+        'Non-penalty goals per 90': 2,'Shots per 90': 2,'Successful dribbles, %': 2,
+        'Aerial duels won, %': 2,'xA per 90': 2,'xG per 90': 2,
+        'Touches in box per 90': 2,'Passes to final third per 90': 2,
+        'Passes to penalty area per 90': 2,
+    },
 }
 
 # Position detection
@@ -541,10 +606,12 @@ with st.expander("⚙️ Advanced Settings", expanded=False):
     st.markdown("**Per-metric weights** (advanced)")
     weight_cols = st.columns(3)
     custom_weights = {}
+    pos_defaults = DEFAULT_WEIGHTS.get(pos_group, {})
     for i, feat in enumerate(avail_feats):
         with weight_cols[i % 3]:
+            default_w = pos_defaults.get(feat, 1)
             custom_weights[feat] = st.slider(
-                feat[:30], 0, 5, 1, key=f"w_{feat}")
+                feat[:30], 0, 5, default_w, key=f"w_{feat}")
 
 # ══════════════════════════════════════════════════════════════════════
 # RUN BUTTON
@@ -573,25 +640,65 @@ with st.spinner("Computing club fits..."):
         st.error("No candidates after filters. Widen league selection or relax filters.")
         st.stop()
 
-    # ── Build club position profiles from player data
-    club_profiles = cand.groupby('Team')[avail_feats].mean().reset_index()
-    team_league_map = (cand.groupby('Team')['League']
-                       .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else x.iloc[0]))
-    team_mv_map = cand.groupby('Team')['Market value'].mean()
-    club_profiles['League'] = club_profiles['Team'].map(team_league_map)
-    club_profiles['Avg MV']  = club_profiles['Team'].map(team_mv_map)
-    club_profiles = club_profiles.dropna(subset=['Avg MV'])
+    # ── Player similarity — team_hq method
+    # Matches the Similar Teams calculation in team_hq exactly
+    w_vec = np.array([custom_weights.get(f, 1) for f in avail_feats], dtype=float)
+    w_vec = w_vec / (w_vec.sum() or 1.0)
 
-    # ── Player similarity score
-    target_vec = target_row[avail_feats].astype(float).values
-    scaler = StandardScaler()
-    X_clubs = scaler.fit_transform(club_profiles[avail_feats])
-    x_tgt   = scaler.transform([target_vec])[0]
-    w_vec   = np.array([custom_weights.get(f, 1) for f in avail_feats], dtype=float)
-    dist    = np.linalg.norm((X_clubs - x_tgt) * w_vec, axis=1)
-    rng     = float(dist.max() - dist.min()) or 1.0
-    player_sim = (1 - (dist - dist.min()) / rng) * 100.0
-    club_profiles['Player Sim %'] = player_sim.round(2)
+    # Build full pool for percentile reference (target + all candidates)
+    full_pool_sim = pd.concat([
+        cand,
+        player_df[player_df['Player'] == selected_name]
+    ], ignore_index=True).drop_duplicates(subset=['Player','Team'])
+
+    # Per-league percentile rank for every player
+    for f in avail_feats:
+        full_pool_sim[f] = pd.to_numeric(full_pool_sim[f], errors='coerce')
+    pct_df = full_pool_sim.groupby('League')[avail_feats].rank(pct=True)
+
+    # Target player percentile vector
+    tgt_mask = (full_pool_sim['Player'] == selected_name)
+    tgt_pct  = pct_df.loc[tgt_mask].mean(axis=0).values
+
+    # Club-level: group candidate players by team → mean percentile per team
+    cand_with_pct = cand[avail_feats].copy()
+    for f in avail_feats:
+        cand_with_pct[f] = pd.to_numeric(cand_with_pct[f], errors='coerce')
+    cand_pct = pct_df.loc[cand.index].values
+
+    # Weighted L1 percentile distance
+    pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w_vec, axis=1)
+    sim_pct_arr = np.exp(-2.8 * pct_dist) * 100.0
+
+    # Z-score actual distance
+    scaler_sim = StandardScaler()
+    all_vals = pd.concat([
+        pd.DataFrame(cand[avail_feats].values, columns=avail_feats),
+        pd.DataFrame(target_row[avail_feats].values.reshape(1,-1), columns=avail_feats)
+    ]).apply(pd.to_numeric, errors='coerce').fillna(0)
+    scaler_sim.fit(all_vals)
+
+    cand_std = scaler_sim.transform(cand[avail_feats].apply(pd.to_numeric, errors='coerce').fillna(0))
+    tgt_std  = scaler_sim.transform(target_row[avail_feats].values.astype(float).reshape(1,-1))
+    act_dist = np.sum(np.abs(cand_std - tgt_std) * w_vec, axis=1)
+    sim_act_arr = np.exp(-0.6 * act_dist) * 100.0
+
+    # Blend 50/50
+    raw_sim = (sim_pct_arr * 0.5 + sim_act_arr * 0.5)
+    cand = cand.copy()
+    cand['_raw_sim'] = raw_sim
+
+    # Club profile: aggregate to team level
+    club_profiles = cand.groupby('Team')[avail_feats].mean().reset_index()
+    team_league_map_local = (cand.groupby('Team')['League']
+                       .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else x.iloc[0]))
+    team_mv_map   = cand.groupby('Team')['Market value'].mean()
+    team_sim_map  = cand.groupby('Team')['_raw_sim'].mean()
+
+    club_profiles['League']  = club_profiles['Team'].map(team_league_map_local)
+    club_profiles['Avg MV']  = club_profiles['Team'].map(team_mv_map)
+    club_profiles['Player Sim %'] = club_profiles['Team'].map(team_sim_map).round(2)
+    club_profiles = club_profiles.dropna(subset=['Avg MV'])
 
     # ── Team style score (from team stats CSV)
     team_style_score = np.zeros(len(club_profiles))
@@ -709,6 +816,12 @@ with st.spinner("Computing club fits..."):
 # ══════════════════════════════════════════════════════════════════════
 # RESULTS
 # ══════════════════════════════════════════════════════════════════════
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import Rectangle
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+import requests, io as _io
+
 st.markdown(f'<div class="section-head">Top {int(top_n)} Club Fits — {selected_name}</div>',
             unsafe_allow_html=True)
 
@@ -718,19 +831,138 @@ if active_styles:
     st.markdown(f'<div style="margin-bottom:12px">Active styles: {tags}</div>',
                 unsafe_allow_html=True)
 
-for _, row in results.iterrows():
-    rank     = int(row['Rank'])
-    rteam    = row['Team']
-    rleague  = row['League']
-    rls      = row['LS']
-    sim_pct  = row['Player Sim %']
-    fit_pct  = row['Final Fit %']
-    avg_mv   = fmt_mv(row['Avg MV'])
-    fc       = score_color(fit_pct)
-    rank_cls = "top" if rank <= 3 else ""
-    bar_w    = int(fit_pct)
+# ── Load fotmob badge helper
+try:
+    from team_fotmob_urls import FOTMOB_TEAM_URLS as _FOTMOB_URLS
+except Exception:
+    _FOTMOB_URLS = {}
 
-    st.markdown(f"""
+@st.cache_data(show_spinner=False)
+def _load_img(url):
+    try:
+        r = requests.get(url, timeout=6); r.raise_for_status()
+        return plt.imread(_io.BytesIO(r.content))
+    except: return None
+
+def _badge_url(team):
+    raw = (_FOTMOB_URLS.get(team) or "").strip()
+    if not raw: return ""
+    import re as _re2
+    m = _re2.search(r"/teams/(\d+)/", raw)
+    return f"https://images.fotmob.com/image_resources/logo/teamlogo/{m.group(1)}.png" if m else ""
+
+def _get_badge(team):
+    url = _badge_url(team)
+    return _load_img(url) if url else None
+
+# ── Ranking image (team_hq style)
+def make_ranking_image(df_show, player_name, theme="Dark"):
+    if df_show.empty: return None
+
+    BG    = "#0a0e1a" if theme=="Dark" else "#f0f2f5"
+    ROW_A = "#0f1628" if theme=="Dark" else "#f7f8fa"
+    ROW_B = "#0b1222" if theme=="Dark" else "#ffffff"
+    TXT   = "#ffffff" if theme=="Dark" else "#111111"
+    SUB   = "#94a3b8" if theme=="Dark" else "#64748b"
+    DIV   = "#1e2d42" if theme=="Dark" else "#e2e8f0"
+    BAR_BG= "#1a2540" if theme=="Dark" else "#e1e1e1"
+    BAR_FG= "#3b82f6"
+    GOLD  = "#f59e0b"
+    RANK_BG = "#111a2e" if theme=="Dark" else "#f3f3f3"
+    RANK_EDGE="#2b3a5a" if theme=="Dark" else "#c0c0c0"
+
+    N = len(df_show)
+    ROW_H = 0.90; HEADER_H = 1.80; FOOT_H = 0.50
+    TOTAL_H = HEADER_H + N * ROW_H + FOOT_H
+
+    fig = plt.figure(figsize=(8.5, TOTAL_H), dpi=200)
+    ax  = fig.add_axes([0,0,1,1]); ax.set_xlim(0,1); ax.set_ylim(0,TOTAL_H); ax.axis("off")
+    ax.add_patch(Rectangle((0,0),1,TOTAL_H,color=BG,zorder=0))
+
+    # Header
+    ty = TOTAL_H - 0.22
+    ax.text(0.04, ty,      "CLUB FIT FINDER",  fontsize=18, fontweight="bold", color=TXT, ha="left", va="top")
+    ax.text(0.04, ty-0.34, player_name.upper(), fontsize=13, fontweight="bold", color=BAR_FG, ha="left", va="top")
+    if active_styles:
+        ax.text(0.04, ty-0.62, "  ·  ".join(active_styles), fontsize=10, color=SUB, ha="left", va="top")
+    base_y = TOTAL_H - HEADER_H
+    ax.plot([0.04,0.96],[base_y+ROW_H/2+0.02]*2, color=DIV, lw=1.1, zorder=2)
+
+    vals = df_show['Final Fit %'].values
+    max_v = float(vals.max()) if vals.max() > 0 else 1.0
+
+    for i, (_, row) in enumerate(df_show.iterrows()):
+        y = base_y - i * ROW_H
+        bg = ROW_A if i % 2 == 0 else ROW_B
+        ax.add_patch(Rectangle((0.04, y-ROW_H/2), 0.92, ROW_H, color=bg, zorder=1))
+
+        # Rank badge
+        is_top3 = i < 3
+        rank_c = GOLD if is_top3 else RANK_EDGE
+        ax.scatter([0.08],[y], s=550, facecolor=RANK_BG,
+                   edgecolor=rank_c, linewidths=1.5, zorder=4)
+        ax.text(0.08, y, str(i+1), fontsize=10, fontweight="bold",
+                color=GOLD if is_top3 else TXT, ha="center", va="center", zorder=5)
+
+        # Badge
+        badge = _get_badge(str(row.get('Team','')))
+        if badge is not None:
+            h,w = badge.shape[0], badge.shape[1]
+            z = 38.0 / max(h,w)
+            ax.add_artist(AnnotationBbox(OffsetImage(badge,zoom=z),(0.155,y),frameon=False,zorder=5))
+
+        # Team name + league
+        ax.text(0.22, y+0.14, str(row.get('Team','')).upper(),
+                fontsize=15, fontweight="bold", color=TXT, ha="left", va="center", zorder=5)
+        ax.text(0.22, y-0.12, f"{row.get('League','')}  ·  Strength {row['LS']:.0f}  ·  Avg MV {fmt_mv(row['Avg MV'])}",
+                fontsize=9.5, color=SUB, ha="left", va="center", zorder=5)
+
+        # Bar
+        frac = max(0.0, min(1.0, float(row['Final Fit %']) / max_v))
+        BAR_L, BAR_W_MAX, BAR_H = 0.62, 0.22, 0.16
+        ax.add_patch(Rectangle((BAR_L, y-BAR_H/2), BAR_W_MAX, BAR_H, color=BAR_BG, zorder=2))
+        ax.add_patch(Rectangle((BAR_L, y-BAR_H/2), BAR_W_MAX*frac, BAR_H, color=BAR_FG, zorder=3))
+
+        # Sim score small
+        ax.text(0.877, y+0.14, f"sim {row['Player Sim %']:.0f}%",
+                fontsize=8, color=SUB, ha="right", va="center", zorder=5)
+        # Fit score
+        fc = score_color(float(row['Final Fit %']))
+        ax.text(0.94, y, f"{row['Final Fit %']:.0f}",
+                fontsize=16, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
+
+    # Footer
+    ax.plot([0.04,0.96],[0.82]*2, color=DIV, lw=0.9, zorder=2)
+    ax.text(0.04, 0.60, "Final Fit % = Player Similarity · League Quality · Market Value realism", fontsize=8.5, color=SUB, va="top")
+
+    buf = _io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, facecolor=BG)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
+
+img_theme = st.radio("Image theme", ["Dark","Light"], horizontal=True, key="img_theme")
+rank_img = make_ranking_image(results, selected_name, theme=img_theme)
+if rank_img:
+    st.image(rank_img, use_column_width=True)
+    st.download_button("⬇️ Download Ranking Image", rank_img,
+                       f"club_fit_{selected_name.replace(' ','_')}.png", "image/png")
+
+# ── Card view (detailed)
+with st.expander("📋 Detailed cards + table", expanded=False):
+    for _, row in results.iterrows():
+        rank    = int(row['Rank'])
+        rteam   = row['Team']
+        rleague = row['League']
+        rls     = row['LS']
+        sim_pct = row['Player Sim %']
+        fit_pct = row['Final Fit %']
+        avg_mv  = fmt_mv(row['Avg MV'])
+        fc      = score_color(fit_pct)
+        rank_cls= "top" if rank <= 3 else ""
+        bar_w   = int(fit_pct)
+
+        st.markdown(f"""
 <div class="result-card">
   <div class="result-rank {rank_cls}">#{rank}</div>
   <div style="flex:1">
@@ -750,7 +982,12 @@ for _, row in results.iterrows():
 </div>
 """, unsafe_allow_html=True)
 
-# Download
+    st.dataframe(results.style.format({
+        'Final Fit %': '{:.1f}', 'Player Sim %': '{:.1f}',
+        'Style Fit %': '{:.1f}', 'LS': '{:.0f}',
+    }), use_container_width=True)
+
+# Download CSV
 csv_out = results.to_csv(index=False).encode('utf-8')
 st.download_button("⬇️ Download Results CSV", csv_out,
                    f"club_fit_{selected_name.replace(' ','_')}.csv",
