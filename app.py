@@ -725,13 +725,16 @@ with st.spinner("Computing club fits..."):
                     .fillna(0).values.reshape(1,-1)
                 )[0]
                 # Get vector for each result team
-                club_team_vals = pd.DataFrame(
-                    [tdf_indexed.loc[t, sim_cols].fillna(0).values.astype(float)
-                     if t in tdf_indexed.index else np.zeros(len(sim_cols), dtype=float)
-                     for t in teams_in_results],
-                    columns=sim_cols, dtype=float
-                )
-                c_std_all = ts.transform(club_team_vals.values)
+                def _get_team_row(t):
+                    if t not in tdf_indexed.index:
+                        return np.zeros(len(sim_cols), dtype=float)
+                    row = tdf_indexed.loc[t]
+                    if isinstance(row, pd.DataFrame):
+                        row = row.iloc[0]
+                    return pd.to_numeric(row[sim_cols], errors='coerce').fillna(0).values.astype(float)
+
+                club_team_mat = np.array([_get_team_row(t) for t in teams_in_results], dtype=float)
+                c_std_all = ts.transform(club_team_mat)
                 dists = np.linalg.norm(c_std_all - t_std, axis=1)
                 all_dists_full = np.linalg.norm(
                     ts.transform(all_v.fillna(0)) - t_std, axis=1)
