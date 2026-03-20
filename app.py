@@ -574,15 +574,17 @@ if len(avail_feats) < 3:
 # STYLE BLEND TOGGLES
 # ══════════════════════════════════════════════════════════════════════
 st.markdown('<div class="section-head">Style Blend</div>', unsafe_allow_html=True)
-st.caption("Tick styles to blend team-level tactical signals into the fit score alongside player similarity.")
+st.caption("Select any combination of styles to blend team-level tactical signals into the fit score.")
 
-style_cols = st.columns(4)
-style_active = {}
-style_names  = ["Similar to Current System", "Possession", "Pressing", "Direct",
-                 "Passing Based", "High Attacking Territory", "Cross Heavy"]
-for i, sname in enumerate(style_names):
-    with style_cols[i % 4]:
-        style_active[sname] = st.checkbox(sname, value=(sname == "Similar to Current System"))
+style_names = ["Similar to Current System", "Possession", "Pressing", "Direct",
+               "Passing Based", "High Attacking Territory", "Cross Heavy"]
+selected_styles = st.multiselect(
+    "Active styles",
+    style_names,
+    default=["Similar to Current System"],
+    help="Multiple styles are blended equally. 'Similar to Current System' compares against your player's actual club tactics."
+)
+style_active = {s: (s in selected_styles) for s in style_names}
 
 # ══════════════════════════════════════════════════════════════════════
 # CANDIDATE POOL + SETTINGS
@@ -640,57 +642,46 @@ with st.spinner("Computing club fits..."):
         st.error("No candidates after filters. Widen league selection or relax filters.")
         st.stop()
 
-    # ── Player similarity — team_hq method
-    # Matches the Similar Teams calculation in team_hq exactly
+    # ── Player similarity — vectorised percentile + z-score blend
     w_vec = np.array([custom_weights.get(f, 1) for f in avail_feats], dtype=float)
     w_vec = w_vec / (w_vec.sum() or 1.0)
 
-    # Build full pool for percentile reference (target + all candidates)
-    # Reset index on cand first so it aligns cleanly with full_pool_sim
     cand = cand.reset_index(drop=True)
+    for f in avail_feats:
+        cand[f] = pd.to_numeric(cand[f], errors='coerce')
 
     target_in_pool = player_df[player_df['Player'] == selected_name].copy()
-    full_pool_sim = pd.concat([cand, target_in_pool], ignore_index=True)\
-                     .drop_duplicates(subset=['Player','Team'])\
-                     .reset_index(drop=True)
-
-    # Per-league percentile rank for every player
+    full_pool_sim  = pd.concat([cand, target_in_pool], ignore_index=True)\
+                      .drop_duplicates(subset=['Player','Team'])\
+                      .reset_index(drop=True)
     for f in avail_feats:
         full_pool_sim[f] = pd.to_numeric(full_pool_sim[f], errors='coerce')
-    pct_df = full_pool_sim.groupby('League')[avail_feats].rank(pct=True)
 
-    # Target player percentile vector
-    tgt_mask = (full_pool_sim['Player'] == selected_name)
-    tgt_pct  = pct_df.loc[tgt_mask].mean(axis=0).values
+    # Single groupby percentile rank call
+    pct_df  = full_pool_sim.groupby('League')[avail_feats].rank(pct=True)
+    tgt_mask = full_pool_sim['Player'] == selected_name
+    tgt_pct  = pct_df.loc[tgt_mask].mean(axis=0).fillna(0.5).values
+    cand_pct = pct_df.loc[list(range(len(cand)))].fillna(0.5).values
 
-    # Candidate indices in full_pool_sim (first len(cand) rows)
-    cand_idx  = list(range(len(cand)))
-    cand_pct  = pct_df.loc[cand_idx].values
-
-    # Weighted L1 percentile distance
-    pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w_vec, axis=1)
+    pct_dist    = np.sum(np.abs(cand_pct - tgt_pct) * w_vec, axis=1)
     sim_pct_arr = np.exp(-2.8 * pct_dist) * 100.0
 
-    # Z-score actual distance
-    scaler_sim = StandardScaler()
-    cand_vals_raw = cand[avail_feats].apply(pd.to_numeric, errors='coerce').fillna(0)
+    cand_vals_raw = cand[avail_feats].fillna(0)
     tgt_vals_raw  = pd.to_numeric(
         pd.Series(target_row[avail_feats].values, index=avail_feats),
         errors='coerce').fillna(0).values.reshape(1, -1)
-    all_vals = pd.concat([
+    all_fit = pd.concat([
         cand_vals_raw,
         pd.DataFrame(tgt_vals_raw, columns=avail_feats)
     ], ignore_index=True)
-    scaler_sim.fit(all_vals)
-    cand_std = scaler_sim.transform(cand_vals_raw)
-    tgt_std  = scaler_sim.transform(tgt_vals_raw)
-    act_dist = np.sum(np.abs(cand_std - tgt_std) * w_vec, axis=1)
+    scaler_sim  = StandardScaler().fit(all_fit)
+    cand_std    = scaler_sim.transform(cand_vals_raw)
+    tgt_std     = scaler_sim.transform(tgt_vals_raw)
+    act_dist    = np.sum(np.abs(cand_std - tgt_std) * w_vec, axis=1)
     sim_act_arr = np.exp(-0.6 * act_dist) * 100.0
 
-    # Blend 50/50
-    raw_sim = (sim_pct_arr * 0.5 + sim_act_arr * 0.5)
     cand = cand.copy()
-    cand['_raw_sim'] = raw_sim
+    cand['_raw_sim'] = sim_pct_arr * 0.5 + sim_act_arr * 0.5
 
     # Club profile: aggregate to team level
     club_profiles = cand.groupby('Team')[avail_feats].mean().reset_index()
@@ -704,74 +695,78 @@ with st.spinner("Computing club fits..."):
     club_profiles['Player Sim %'] = club_profiles['Team'].map(team_sim_map).round(2)
     club_profiles = club_profiles.dropna(subset=['Avg MV'])
 
-    # ── Team style score (from team stats CSV)
-    team_style_score = np.zeros(len(club_profiles))
+    # ── Team style score (vectorised — no row-by-row loops)
+    team_style_score = np.full(len(club_profiles), 50.0)
     team_data_available = not team_df.empty and 'Team' in team_df.columns
 
     active_non_system = [s for s, v in style_active.items()
                          if v and s != "Similar to Current System"]
 
     if team_data_available and (active_non_system or style_active.get("Similar to Current System")):
-        # Get target team stats if "Similar to Current System" active
-        target_team_stats = None
-        if style_active.get("Similar to Current System") and not team_df.empty:
-            tts = team_df[team_df['Team'] == team]
-            if not tts.empty:
-                target_team_stats = tts.iloc[0]
-
         avail_team_cols = [c for c in TEAM_STAT_COLS if c in team_df.columns]
+        tdf = team_df.copy()
+        for c in avail_team_cols:
+            tdf[c] = pd.to_numeric(tdf[c], errors='coerce')
 
-        # Build a style target vector from team stats
-        style_scores_list = []
+        # Map each club_profile team → its team stats row
+        tdf_indexed = tdf.set_index('Team')
+        teams_in_results = club_profiles['Team'].values
+        style_parts = []
 
-        for idx, row in club_profiles.iterrows():
-            club_team = row['Team']
-            club_team_row = team_df[team_df['Team'] == club_team]
-            if club_team_row.empty:
-                style_scores_list.append(50.0)
-                continue
+        # ── "Similar to Current System" — vectorised distance from target club
+        if style_active.get("Similar to Current System"):
+            tts = tdf[tdf['Team'] == team]
+            if not tts.empty and avail_team_cols:
+                sim_cols = avail_team_cols
+                all_v = tdf[sim_cols].fillna(0)
+                ts = StandardScaler().fit(all_v)
+                t_std = ts.transform(
+                    pd.to_numeric(tts.iloc[0][sim_cols], errors='coerce')
+                    .fillna(0).values.reshape(1,-1)
+                )[0]
+                # Get vector for each result team
+                club_team_vals = pd.DataFrame(
+                    [tdf_indexed.loc[t, sim_cols].fillna(0).values
+                     if t in tdf_indexed.index else np.zeros(len(sim_cols))
+                     for t in teams_in_results],
+                    columns=sim_cols
+                )
+                c_std_all = ts.transform(club_team_vals)
+                dists = np.linalg.norm(c_std_all - t_std, axis=1)
+                all_dists_full = np.linalg.norm(
+                    ts.transform(all_v.fillna(0)) - t_std, axis=1)
+                rng2 = float(all_dists_full.max() - all_dists_full.min()) or 1.0
+                sys_score = (1 - (dists - all_dists_full.min()) / rng2) * 100
+                style_parts.append(np.clip(sys_score, 0, 100))
 
-            ctr = club_team_row.iloc[0]
-            score_parts = []
+        # ── Tactical style blends — vectorised percentile per column
+        for sname in active_non_system:
+            blend_def = STYLE_BLENDS.get(sname, {})
+            col_scores = []
+            for col, direction in blend_def.items():
+                if col not in tdf.columns: continue
+                col_series = tdf[col].dropna()
+                if col_series.empty: continue
+                # Get value for each result team
+                vals = np.array([
+                    float(tdf_indexed.loc[t, col])
+                    if t in tdf_indexed.index and pd.notna(tdf_indexed.loc[t, col])
+                    else np.nan
+                    for t in teams_in_results
+                ])
+                # Vectorised percentile rank
+                pct = np.array([
+                    float((col_series <= v).mean() * 100) if not np.isnan(v) else 50.0
+                    for v in vals
+                ])
+                if direction < 0:
+                    pct = 100 - pct
+                col_scores.append(pct * abs(direction))
+            if col_scores:
+                style_parts.append(np.mean(col_scores, axis=0))
 
-            # Similar to current system — distance from target team stats
-            if style_active.get("Similar to Current System") and target_team_stats is not None:
-                sim_cols = [c for c in avail_team_cols if c in team_df.columns]
-                if sim_cols:
-                    t_vals = pd.to_numeric(target_team_stats[sim_cols], errors='coerce').fillna(0).values
-                    c_vals = pd.to_numeric(ctr[sim_cols], errors='coerce').fillna(0).values
-                    ts = StandardScaler()
-                    all_v = team_df[sim_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-                    ts.fit(all_v)
-                    t_std = ts.transform([t_vals])[0]
-                    c_std = ts.transform([c_vals])[0]
-                    d = np.linalg.norm(t_std - c_std)
-                    all_dists = [np.linalg.norm(ts.transform([pd.to_numeric(r[sim_cols], errors='coerce').fillna(0).values])[0] - t_std)
-                                 for _, r in team_df.iterrows()]
-                    rng2 = max(all_dists) - min(all_dists) or 1.0
-                    score_parts.append((1 - (d - min(all_dists)) / rng2) * 100)
-
-            # Tactical style blends
-            for sname in active_non_system:
-                blend_def = STYLE_BLENDS.get(sname, {})
-                sub_scores = []
-                for col, direction in blend_def.items():
-                    if col not in team_df.columns: continue
-                    col_vals = pd.to_numeric(team_df[col], errors='coerce').dropna()
-                    val = pd.to_numeric(ctr.get(col), errors='coerce')
-                    if pd.isna(val) or col_vals.empty: continue
-                    pct = float((col_vals <= val).mean() * 100)
-                    if direction < 0:  # lower is better (e.g. PPDA)
-                        pct = 100 - pct
-                    sub_scores.append(pct * abs(direction))
-                if sub_scores:
-                    score_parts.append(sum(sub_scores) / len(sub_scores))
-
-            style_scores_list.append(np.mean(score_parts) if score_parts else 50.0)
-
-        team_style_score = np.array(style_scores_list)
-    else:
-        team_style_score = np.full(len(club_profiles), 50.0)
+        if style_parts:
+            team_style_score = np.mean(style_parts, axis=0)
 
     # ── Blend player sim + team style
     any_style_active = any(style_active.values())
