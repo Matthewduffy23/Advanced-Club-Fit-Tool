@@ -787,15 +787,13 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
                 fontsize=16, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
 
     # ── Footer: plain-English auto-summary ───────────────────────────
-    ax.plot([LEFT, RIGHT], [0.82]*2, color=DIV, lw=0.9, zorder=2)
+    foot_top = FOOT_H - 0.05
+    ax.plot([LEFT, RIGHT], [foot_top + 0.72]*2, color=DIV, lw=0.9, zorder=2)
 
-    # Build a plain-English summary of what was used
-    _style_desc = "playing style similarity to their current club" if (sel_styles and "Similar to Current System" in sel_styles) else \
-                  ("preferred tactical styles (" + ", ".join(sel_styles) + ")" if sel_styles else "tactical style")
-    _named_styles = [s for s in (sel_styles or []) if s != "Similar to Current System"]
-    _constraint_note = (f"Style tags ({', '.join(_named_styles)}) require clubs to be in the top 40% of the dataset for those metrics. ") if _named_styles else ""
-    _lw_pct = int(round(league_weight * 100))
-    _mv_pct = int(round(market_weight * 100))
+    _named_styles  = [s for s in (sel_styles or []) if s != "Similar to Current System"]
+    _constraint_note = (f"Style tags ({', '.join(_named_styles)}) require clubs to be in the top 40% of their own league for those metrics. ") if _named_styles else ""
+    _lw_pct  = int(round(league_weight * 100))
+    _mv_pct  = int(round(market_weight * 100))
     _sim_pct = max(0, 100 - _lw_pct - _mv_pct)
     summary_line1 = (
         f"How clubs are ranked: {_sim_pct}% how closely each club's players match {player_name}'s "
@@ -807,8 +805,8 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         f"{_constraint_note}"
         f"Only players with {min_mins}+ mins included."
     )
-    ax.text(LEFT, 0.60, summary_line1, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
-    ax.text(LEFT, 0.44, summary_line2, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
+    ax.text(LEFT, foot_top + 0.58, summary_line1, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
+    ax.text(LEFT, foot_top + 0.35, summary_line2, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=DPI, facecolor=BG, bbox_inches="tight")
