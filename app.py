@@ -525,22 +525,24 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         RANK_BG   = "#111a2e"
         RANK_EDGE = "#2b3a5a"
         HDR_ACCENT = "#3b82f6"
-    else:  # Light
+    else:  # Light — exact match to team_hq.py
         BG        = "#ffffff"
-        ROW_A     = "#f8fafc"
+        ROW_A     = "#f7f7f7"
         ROW_B     = "#ffffff"
-        TXT       = "#0f172a"
-        SUB       = "#475569"
-        FOOT      = "#94a3b8"
-        DIV       = "#cbd5e1"
-        BAR_BG    = "#e2e8f0"
+        TXT       = "#111111"
+        SUB       = "#777777"
+        FOOT      = "#9b9b9b"
+        DIV       = "#e2e2e2"
+        BAR_BG    = "#e1e1e1"
         BAR_FG    = "#3b82f6"
-        RANK_BG   = "#f1f5f9"
-        RANK_EDGE = "#94a3b8"
+        RANK_BG   = "#f3f3f3"
+        RANK_EDGE = "#c0c0c0"
         HDR_ACCENT = "#2563eb"
 
     GOLD = "#f59e0b"
     N    = len(df_show)
+    max_v = float(df_show['FinalFit'].max()) or 1.0
+    style_str = "  ·  ".join(active_styles) if active_styles else ""
 
     # ── 1920×1080 banner ──────────────────────────────────────────────
     if export_mode == "1920×1080 (banner)":
@@ -549,163 +551,115 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         ax  = fig.add_axes([0, 0, 1, 1])
         ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
         ax.add_patch(Rectangle((0, 0), 1, 1, color=BG, zorder=0))
-        if theme == "Light":
-            ax.add_patch(Rectangle((0, 0), 1, 1,
-                                    fill=False, edgecolor="#cbd5e1", linewidth=2, zorder=10))
-
         LEFT, RIGHT = 0.045, 0.955
-
-        # Header
-        ax.text(LEFT, 0.972, "CLUB FIT FINDER",
-                fontsize=48, fontweight="bold", color=TXT, ha="left", va="top")
-        ax.text(LEFT, 0.912, player_name.upper(),
-                fontsize=34, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
-        style_str = "  ·  ".join(active_styles) if active_styles else ""
+        ax.text(LEFT, 0.972, "CLUB FIT FINDER", fontsize=48, fontweight="bold", color=TXT, ha="left", va="top")
+        ax.text(LEFT, 0.912, player_name.upper(), fontsize=34, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
         if style_str:
             ax.text(LEFT, 0.870, style_str, fontsize=20, color=SUB, ha="left", va="top")
         ax.plot([LEFT, RIGHT], [0.835, 0.835], color=DIV, lw=2.2)
         ax.plot([LEFT, RIGHT], [0.040, 0.040], color=DIV, lw=2.2)
-        ax.text(LEFT, 0.022,
-                "Final Fit % = Player Similarity · League Quality · Market Value",
-                fontsize=13, color=FOOT, ha="left", va="top")
-
+        ax.text(LEFT, 0.022, "Final Fit % = Player Similarity · League Quality · Market Value", fontsize=13, color=FOOT, ha="left", va="top")
         ROW_TOP = 0.813; ROW_BOT = 0.050
         row_gap = (ROW_TOP - ROW_BOT) / float(N)
         row_h   = row_gap * 0.92
-        RANK_X  = LEFT + 0.024; CREST_X = LEFT + 0.105; NAME_X = LEFT + 0.175
-        BAR_L   = LEFT + 0.62;  BAR_R   = RIGHT - 0.14
-        BAR_W   = BAR_R - BAR_L; BAR_H2  = row_h * 0.26; VAL_X  = RIGHT - 0.025
-        max_v   = float(df_show['FinalFit'].max()) or 1.0
-
+        RANK_X = LEFT+0.024; CREST_X = LEFT+0.105; NAME_X = LEFT+0.175
+        BAR_L  = LEFT+0.62;  BAR_R   = RIGHT-0.14
+        BAR_W  = BAR_R-BAR_L; BAR_H2 = row_h*0.26; VAL_X = RIGHT-0.025
         for i, (_, row) in enumerate(df_show.iterrows()):
-            y  = ROW_TOP - (i + 0.5) * row_gap
-            ax.add_patch(Rectangle((LEFT, y - row_h / 2), RIGHT - LEFT, row_h,
-                                    color=(ROW_A if i % 2 == 0 else ROW_B), zorder=1))
-
-            # Rank badge
-            is_top3   = i < 3
-            edge_col  = GOLD if is_top3 else RANK_EDGE
-            rank_col  = GOLD if is_top3 else TXT
-            ax.scatter([RANK_X], [y], s=1320, facecolor=RANK_BG,
-                       edgecolor=edge_col, linewidths=2.2, zorder=4)
-            ax.text(RANK_X, y, str(i + 1), fontsize=16, fontweight="bold",
-                    color=rank_col, ha="center", va="center", zorder=5)
-
+            y = ROW_TOP - (i + 0.5) * row_gap
+            ax.add_patch(Rectangle((LEFT, y-row_h/2), RIGHT-LEFT, row_h,
+                                    color=(ROW_A if i%2==0 else ROW_B), zorder=1))
+            edge_col = GOLD if i < 3 else RANK_EDGE
+            rank_col = GOLD if i < 3 else TXT
+            ax.scatter([RANK_X], [y], s=1320, facecolor=RANK_BG, edgecolor=edge_col, linewidths=2.2, zorder=4)
+            ax.text(RANK_X, y, str(i+1), fontsize=16, fontweight="bold", color=rank_col, ha="center", va="center", zorder=5)
             bdg = _badge(str(row['Team']))
             if bdg is not None:
-                h, w2 = bdg.shape[:2]; z = 52.0 / max(h, w2)
-                ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=z),
-                              (CREST_X, y), frameon=False, zorder=5))
-
-            ax.text(NAME_X, y + row_h * 0.18, str(row['Team']).upper(),
-                    fontsize=28, fontweight="bold", color=TXT, ha="left", va="center", zorder=6)
-            ax.text(NAME_X, y - row_h * 0.22, str(row['League']),
-                    fontsize=19, color=SUB, ha="left", va="center", zorder=6)
-
+                h, w2 = bdg.shape[:2]; z = 52.0/max(h, w2)
+                ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=z), (CREST_X, y), frameon=False, zorder=5))
+            ax.text(NAME_X, y+row_h*0.18, str(row['Team']).upper(), fontsize=28, fontweight="bold", color=TXT, ha="left", va="center", zorder=6)
+            ax.text(NAME_X, y-row_h*0.22, str(row['League']), fontsize=19, color=SUB, ha="left", va="center", zorder=6)
             frac = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
-            ax.add_patch(Rectangle((BAR_L, y - BAR_H2 / 2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
-            ax.add_patch(Rectangle((BAR_L, y - BAR_H2 / 2), BAR_W * frac, BAR_H2, color=BAR_FG, zorder=3))
-
+            ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
+            ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W*frac, BAR_H2, color=BAR_FG, zorder=3))
             fc = score_col(float(row['FinalFit']))
-            ax.text(VAL_X, y, f"{row['FinalFit']:.0f}",
-                    fontsize=29, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
-
+            ax.text(VAL_X, y, f"{row['FinalFit']:.0f}", fontsize=29, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
         plt.close(fig); buf.seek(0)
         return buf.getvalue()
 
-    # ── Standard (auto-height) ────────────────────────────────────────
-    W_IN  = 7.2
-    ROW_H = 1.10
-    HDR_H = 1.65
-    FT_H  = 0.55
-    TOT_H = HDR_H + N * ROW_H + FT_H
-    DPI   = 180
+    # ── Standard — exact team_hq.py layout (normalised 0–1 coords) ───
+    ROW_H   = 0.82
+    HEADER_H = 1.70
+    FOOT_H  = 0.55
+    TOTAL_H = HEADER_H + N * ROW_H + FOOT_H
+    DPI     = 220
 
-    fig = plt.figure(figsize=(W_IN, TOT_H), dpi=DPI)
-    ax  = fig.add_axes([0, 0, 1, 1])
-    ax.set_xlim(0, W_IN); ax.set_ylim(0, TOT_H); ax.axis("off")
-    ax.add_patch(Rectangle((0, 0), W_IN, TOT_H, color=BG, zorder=0))
-    # Subtle border so light image doesn't bleed into white page
-    if theme == "Light":
-        ax.add_patch(Rectangle((0, 0), W_IN, TOT_H,
-                                fill=False, edgecolor="#cbd5e1", linewidth=1.5, zorder=10))
+    fig = plt.figure(figsize=(8.3, TOTAL_H), dpi=DPI)
+    ax  = fig.add_axes([0, 0, 1, 1.0])
+    ax.set_xlim(0, 1.0); ax.set_ylim(0, TOTAL_H); ax.axis("off")
+    ax.add_patch(Rectangle((0, 0), 1.0, TOTAL_H, color=BG, zorder=0))
 
-    # Header
-    ty = TOT_H - 0.20
-    ax.text(0.30, ty, "CLUB FIT FINDER",
-            fontsize=16, fontweight="bold", color=TXT, ha="left", va="top")
-    ax.text(0.30, ty - 0.36, player_name.upper(),
-            fontsize=13, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
-    style_str = "  ·  ".join(active_styles) if active_styles else ""
+    # Header (top-left, same position as team_hq)
+    title_y = TOTAL_H - 0.25
+    ax.text(0.04, title_y,       "CLUB FIT FINDER",   fontsize=19, fontweight="bold", color=TXT, ha="left", va="top")
+    ax.text(0.04, title_y-0.34,  player_name.upper(), fontsize=14, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
     if style_str:
-        ax.text(0.30, ty - 0.65, style_str, fontsize=9, color=SUB, ha="left", va="top")
+        ax.text(0.04, title_y-0.62, style_str,         fontsize=11, color=SUB, ha="left", va="top")
 
-    base_y = TOT_H - HDR_H
-    ax.plot([0.18, W_IN - 0.18], [base_y + ROW_H * 0.08] * 2, color=DIV, lw=0.9)
+    base_y = TOTAL_H - HEADER_H
+    ax.plot([0.04, 0.96], [base_y + ROW_H/2 + 0.02]*2, color=DIV, lw=1.1, zorder=2)
 
-    BAR_X = W_IN - 2.50; BAR_W = 1.55; VAL_X = W_IN - 0.25
-    ax.text(BAR_X + BAR_W / 2, base_y - 0.04, "FIT",
-            fontsize=8, color=SUB, ha="center", va="top")
-    ax.text(VAL_X, base_y - 0.04, "SCORE",
-            fontsize=8, color=SUB, ha="right", va="top")
-
-    max_v = float(df_show['FinalFit'].max()) or 1.0
+    # Column layout — exactly matching team_hq
+    LEFT, RIGHT = 0.04, 0.96
+    crest_x = 0.14
+    BAR_L, BAR_R = 0.66, 0.82
+    BAR_W = BAR_R - BAR_L
+    BAR_H2 = 0.14
+    VAL_X = 0.94
 
     for i, (_, row) in enumerate(df_show.iterrows()):
-        y  = base_y - (i + 0.5) * ROW_H
-        bg = ROW_A if i % 2 == 0 else ROW_B
-        ax.add_patch(Rectangle((0.14, y - ROW_H / 2), W_IN - 0.28, ROW_H,
-                                color=bg, zorder=1))
+        y = base_y - i * ROW_H
+        ax.add_patch(Rectangle((LEFT, y-ROW_H/2), RIGHT-LEFT, ROW_H,
+                                color=(ROW_A if i%2==0 else ROW_B), zorder=1))
 
-        # Rank badge
-        is_top3   = i < 3
-        edge_col  = GOLD if is_top3 else RANK_EDGE
-        rank_color = GOLD if is_top3 else TXT
-        circle = plt.Circle((0.42, y), 0.32, color=RANK_BG, zorder=3)
-        ax.add_patch(circle)
-        theta = np.linspace(0, 2 * np.pi, 120)
-        ax.plot(0.42 + 0.32 * np.cos(theta), y + 0.32 * np.sin(theta),
-                color=edge_col, lw=1.6, zorder=4)
-        ax.text(0.42, y, str(i + 1), fontsize=11, fontweight="bold",
+        # Rank badge — scatter circle, same as team_hq
+        edge_col  = GOLD if i < 3 else RANK_EDGE
+        rank_color = GOLD if i < 3 else TXT
+        ax.scatter([0.07], [y], s=520, facecolor=RANK_BG,
+                   edgecolor=edge_col, linewidths=1.2, zorder=4)
+        ax.text(0.07, y, str(i+1), fontsize=10, fontweight="bold",
                 color=rank_color, ha="center", va="center", zorder=5)
 
-        # Club badge — fixed size, sits between rank circle and team name
+        # Club badge at crest_x=0.14
         bdg = _badge(str(row['Team']))
-        BADGE_X = 1.06
         if bdg is not None:
             h, w2 = bdg.shape[:2]
-            zoom = 38.0 / max(h, w2)
-            ax.add_artist(AnnotationBbox(
-                OffsetImage(bdg, zoom=zoom),
-                (BADGE_X, y), frameon=False, zorder=5, box_alignment=(0.5, 0.5)))
+            z = 40.0 / max(h, w2)
+            ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=z),
+                          (crest_x, y), frameon=False, zorder=5))
 
-        # Team name & league
-        name_x = 1.52
-        ax.text(name_x, y + 0.20, str(row['Team']).upper(),
-                fontsize=12.5, fontweight="bold", color=TXT,
-                ha="left", va="center", zorder=5)
-        ax.text(name_x, y - 0.18, str(row['League']),
-                fontsize=8.5, color=SUB, ha="left", va="center", zorder=5)
+        # Team name at 0.21, league below — exactly team_hq
+        ax.text(0.21, y+0.12, str(row['Team']).upper(),
+                fontsize=16, fontweight="bold", color=TXT, ha="left", va="center", zorder=5)
+        ax.text(0.21, y-0.10, str(row['League']),
+                fontsize=12, color=SUB, ha="left", va="center", zorder=5)
 
         # Fit bar
-        BAR_H2 = 0.16
-        frac   = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
-        ax.add_patch(Rectangle((BAR_X, y - BAR_H2 / 2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
-        ax.add_patch(Rectangle((BAR_X, y - BAR_H2 / 2), BAR_W * frac, BAR_H2, color=BAR_FG, zorder=3))
+        frac = max(0.0, min(1.0, float(row['FinalFit']) / max_v))
+        ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
+        ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W*frac, BAR_H2, color=BAR_FG, zorder=3))
 
         # Score
         fc = score_col(float(row['FinalFit']))
         ax.text(VAL_X, y, f"{row['FinalFit']:.0f}",
-                fontsize=20, fontweight="bold", color=fc,
-                ha="right", va="center", zorder=6)
+                fontsize=16, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
 
     # Footer
-    ax.plot([0.18, W_IN - 0.18], [FT_H + 0.10] * 2, color=DIV, lw=0.7)
-    ax.text(0.30, FT_H - 0.02,
-            "Final Fit % = Player Similarity · League Quality · Market Value",
-            fontsize=8, color=FOOT, ha="left", va="top")
+    ax.plot([LEFT, RIGHT], [0.82]*2, color=DIV, lw=0.9, zorder=2)
+    ax.text(LEFT, 0.62, "Final Fit % = Player Similarity · League Quality · Market Value",
+            fontsize=9.5, color=FOOT, ha="left", va="top", zorder=4)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=DPI, facecolor=BG, bbox_inches="tight")
@@ -843,4 +797,4 @@ FIT VERDICT: SIGN / MONITOR / PASS with one decisive reason tied to the {fit_pct
                     except Exception as e:
                         st.error(f"AI error: {e}")
             elif f"ai_cache_{team_name}" in st.session_state:
-                parse_and_render(st.session_state[f"ai_cache_{team_name}"], team_name)
+                parse_and_render(st.session_state[f"ai_cache_{team_name}"], team_name))
