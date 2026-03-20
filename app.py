@@ -726,12 +726,12 @@ with st.spinner("Computing club fits..."):
                 )[0]
                 # Get vector for each result team
                 club_team_vals = pd.DataFrame(
-                    [tdf_indexed.loc[t, sim_cols].fillna(0).values
-                     if t in tdf_indexed.index else np.zeros(len(sim_cols))
+                    [tdf_indexed.loc[t, sim_cols].fillna(0).values.astype(float)
+                     if t in tdf_indexed.index else np.zeros(len(sim_cols), dtype=float)
                      for t in teams_in_results],
-                    columns=sim_cols
+                    columns=sim_cols, dtype=float
                 )
-                c_std_all = ts.transform(club_team_vals)
+                c_std_all = ts.transform(club_team_vals.values)
                 dists = np.linalg.norm(c_std_all - t_std, axis=1)
                 all_dists_full = np.linalg.norm(
                     ts.transform(all_v.fillna(0)) - t_std, axis=1)
