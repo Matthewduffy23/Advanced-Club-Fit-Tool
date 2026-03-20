@@ -373,9 +373,16 @@ with st.spinner("Computing…"):
     grp = cand.groupby('Team')
     club = grp[feats].mean().reset_index()
     club['League'] = grp['League'].agg(lambda x: x.mode().iloc[0])
-    club['AvgMV']  = grp['Market value'].mean()
-    club['SimPct'] = grp['_sim'].mean()
-    club = club.dropna(subset=['AvgMV'])
+    # Market value — fill missing with median so no clubs are dropped
+    if 'Market value' in cand.columns:
+        mv_series = pd.to_numeric(cand['Market value'], errors='coerce')
+        median_mv = mv_series.median() or 2_000_000
+        cand['_mv'] = mv_series.fillna(median_mv)
+    else:
+        cand['_mv'] = 2_000_000
+    club['AvgMV'] = cand.groupby('Team')['_mv'].mean()
+    club['AvgMV'] = club['AvgMV'].fillna(2_000_000)
+    club['SimPct'] = cand.groupby('Team')['_sim'].mean()
 
     if club.empty:
         st.error("No clubs with complete data.")
@@ -464,7 +471,7 @@ with st.spinner("Computing…"):
     adj  *= (1 - gap / 100).clip(lower=0.7)
 
     # Market value
-    tgt_mv = float(mv_override) if mv_override > 0 else float(tgt.get('Market value') or 2_000_000)
+    tgt_mv = float(mv_override) if mv_override > 0 else float(pd.to_numeric(tgt.get('Market value', 0), errors='coerce') or 2_000_000)
     tgt_mv = max(tgt_mv, 1.0)
     mv_ratio = (club['AvgMV'] / tgt_mv).clip(0.5, 1.5)
     mv_score = (1 - abs(1 - mv_ratio)) * 100
