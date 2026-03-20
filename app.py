@@ -797,4 +797,4 @@ FIT VERDICT: SIGN / MONITOR / PASS with one decisive reason tied to the {fit_pct
                     except Exception as e:
                         st.error(f"AI error: {e}")
             elif f"ai_cache_{team_name}" in st.session_state:
-                parse_and_render(st.session_state[f"ai_cache_{team_name}"], team_name))
+                parse_and_render(st.session_state[f"ai_cache_{team_name}"], team_name)
