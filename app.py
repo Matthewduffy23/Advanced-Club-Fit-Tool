@@ -712,10 +712,10 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         return buf.getvalue()
 
     # ── Standard — exact team_hq.py layout (normalised 0–1 coords) ───
-    ROW_H   = 0.82
+    ROW_H    = 0.82
     HEADER_H = 1.70
-    FOOT_H  = 0.95
-    TOTAL_H = HEADER_H + N * ROW_H + FOOT_H
+    FOOT_H   = 1.10
+    TOTAL_H  = HEADER_H + N * ROW_H + FOOT_H
     DPI     = 220
 
     fig = plt.figure(figsize=(8.3, TOTAL_H), dpi=DPI)
@@ -728,13 +728,12 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     ax.text(0.04, title_y,       "CLUB FIT FINDER",   fontsize=19, fontweight="bold", color=TXT, ha="left", va="top")
     ax.text(0.04, title_y-0.34,  player_name.upper(), fontsize=14, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
 
-    # Subtitle line: Style-Role Similarity first, then styles
+    # Subtitle — all parts treated equally, separated by  ·
     subtitle_parts = []
-    subtitle_parts.append(f"Role: {pg}" if pg else "")
-    subtitle_parts.append(f"League: {tgt_league}" if tgt_league else "")
-    if style_str:
-        subtitle_parts.append(f"Style-Role Similarity: {style_str}")
-    subtitle_line = "  ·  ".join(p for p in subtitle_parts if p)
+    if pg:          subtitle_parts.append(f"Role: {pg}")
+    if tgt_league:  subtitle_parts.append(f"League: {tgt_league}")
+    if style_str:   subtitle_parts.append(f"Style-Role Similarity: {style_str}")
+    subtitle_line = "  ·  ".join(subtitle_parts)
     if subtitle_line:
         ax.text(0.04, title_y-0.62, subtitle_line, fontsize=9, color=SUB, ha="left", va="top")
 
@@ -791,22 +790,21 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     ax.plot([LEFT, RIGHT], [foot_top + 0.72]*2, color=DIV, lw=0.9, zorder=2)
 
     _named_styles  = [s for s in (sel_styles or []) if s != "Similar to Current System"]
-    _constraint_note = (f"Style tags ({', '.join(_named_styles)}) require clubs to be in the top 40% of their own league for those metrics. ") if _named_styles else ""
     _lw_pct  = int(round(league_weight * 100))
     _mv_pct  = int(round(market_weight * 100))
     _sim_pct = max(0, 100 - _lw_pct - _mv_pct)
-    summary_line1 = (
-        f"How clubs are ranked: {_sim_pct}% how closely each club's players match {player_name}'s "
-        f"statistical profile as a {pg},"
-    )
-    summary_line2 = (
-        f"{_lw_pct}% league quality vs {tgt_league} (strength {tgt_ls:.0f}/100), "
-        f"{_mv_pct}% squad market value alignment. "
-        f"{_constraint_note}"
-        f"Only players with {min_mins}+ mins included."
-    )
-    ax.text(LEFT, foot_top + 0.58, summary_line1, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
-    ax.text(LEFT, foot_top + 0.35, summary_line2, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
+
+    summary_line1 = (f"Ranked by: {_sim_pct}% player profile match ({pg}), "
+                     f"{_lw_pct}% league quality, {_mv_pct}% market value. "
+                     f"{min_mins}+ mins only.")
+    summary_line2 = (f"League quality vs {tgt_league} (strength {tgt_ls:.0f}/100).")
+    summary_line3 = (f"Style filters ({', '.join(_named_styles)}): top 40% within own league required."
+                     if _named_styles else "")
+
+    ax.text(LEFT, foot_top + 0.62, summary_line1, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
+    ax.text(LEFT, foot_top + 0.42, summary_line2, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
+    if summary_line3:
+        ax.text(LEFT, foot_top + 0.22, summary_line3, fontsize=7.5, color=FOOT, ha="left", va="top", zorder=4)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=DPI, facecolor=BG, bbox_inches="tight")
