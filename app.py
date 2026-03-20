@@ -508,7 +508,9 @@ def _badge(team):
     except: return None
 
 # ── Ranking image ─────────────────────────────────────────────────────
-def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_mode="Standard (auto)"):
+def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_mode="Standard (auto)",
+                     pg="", tgt_league="", tgt_ls=50, league_weight=0.35, market_weight=0.20,
+                     min_mins=500, top_n=10, sel_styles=None):
     if df_show.empty: return None
 
     # ── Theme palettes ────────────────────────────────────────────────
@@ -534,10 +536,10 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         FOOT      = "#9b9b9b"
         DIV       = "#e2e2e2"
         BAR_BG    = "#e1e1e1"
-        BAR_FG    = "#3b82f6"
+        BAR_FG    = "#bfbfbf"   # grey bar, no colour coding on light
         RANK_BG   = "#f3f3f3"
         RANK_EDGE = "#c0c0c0"
-        HDR_ACCENT = "#2563eb"
+        HDR_ACCENT = "#111111"  # player name in black on light
 
     GOLD = "#f59e0b"
     N    = len(df_show)
@@ -592,7 +594,7 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     # ── Standard — exact team_hq.py layout (normalised 0–1 coords) ───
     ROW_H   = 0.82
     HEADER_H = 1.70
-    FOOT_H  = 0.55
+    FOOT_H  = 0.95
     TOTAL_H = HEADER_H + N * ROW_H + FOOT_H
     DPI     = 220
 
@@ -605,8 +607,16 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     title_y = TOTAL_H - 0.25
     ax.text(0.04, title_y,       "CLUB FIT FINDER",   fontsize=19, fontweight="bold", color=TXT, ha="left", va="top")
     ax.text(0.04, title_y-0.34,  player_name.upper(), fontsize=14, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
+
+    # Subtitle line: Style-Role Similarity first, then styles
+    subtitle_parts = []
+    subtitle_parts.append(f"Role: {pg}" if pg else "")
+    subtitle_parts.append(f"League: {tgt_league}" if tgt_league else "")
     if style_str:
-        ax.text(0.04, title_y-0.62, style_str,         fontsize=11, color=SUB, ha="left", va="top")
+        subtitle_parts.append(f"Style-Role Similarity: {style_str}")
+    subtitle_line = "  ·  ".join(p for p in subtitle_parts if p)
+    if subtitle_line:
+        ax.text(0.04, title_y-0.62, subtitle_line, fontsize=9, color=SUB, ha="left", va="top")
 
     base_y = TOTAL_H - HEADER_H
     ax.plot([0.04, 0.96], [base_y + ROW_H/2 + 0.02]*2, color=DIV, lw=1.1, zorder=2)
@@ -651,15 +661,31 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
         ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W*frac, BAR_H2, color=BAR_FG, zorder=3))
 
-        # Score
-        fc = score_col(float(row['FinalFit']))
+        # Score — black numbers on light, colour-coded on dark
+        fc = "#111111" if theme == "Light" else score_col(float(row['FinalFit']))
         ax.text(VAL_X, y, f"{row['FinalFit']:.0f}",
                 fontsize=16, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
 
-    # Footer
+    # ── Footer: plain-English auto-summary ───────────────────────────
     ax.plot([LEFT, RIGHT], [0.82]*2, color=DIV, lw=0.9, zorder=2)
-    ax.text(LEFT, 0.62, "Final Fit % = Player Similarity · League Quality · Market Value",
-            fontsize=9.5, color=FOOT, ha="left", va="top", zorder=4)
+
+    # Build a plain-English summary of what was used
+    _style_desc = "playing style similarity to their current club" if (sel_styles and "Similar to Current System" in sel_styles) else \
+                  ("preferred tactical styles (" + ", ".join(sel_styles) + ")" if sel_styles else "tactical style")
+    _lw_pct = int(round(league_weight * 100))
+    _mv_pct = int(round(market_weight * 100))
+    _sim_pct = max(0, 100 - _lw_pct - _mv_pct)
+    summary_line1 = (
+        f"How clubs are ranked: {_sim_pct}% how closely each club's players match {player_name}'s "
+        f"statistical profile as a {pg},"
+    )
+    summary_line2 = (
+        f"{_lw_pct}% league quality compared to {tgt_league} (strength {tgt_ls:.0f}/100), "
+        f"{_mv_pct}% squad market value alignment. "
+        f"Only players with {min_mins}+ mins included."
+    )
+    ax.text(LEFT, 0.60, summary_line1, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
+    ax.text(LEFT, 0.44, summary_line2, fontsize=8, color=FOOT, ha="left", va="top", zorder=4)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=DPI, facecolor=BG, bbox_inches="tight")
@@ -667,9 +693,19 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     return buf.getvalue()
 
 
-rank_img = make_ranking_img(results, sel_name, sel_styles,
-                             theme=img_theme,
-                             export_mode="1920×1080 (banner)" if img_format == "1920×1080" else "Standard (auto)")
+rank_img = make_ranking_img(
+    results, sel_name, sel_styles,
+    theme=img_theme,
+    export_mode="1920×1080 (banner)" if img_format == "1920×1080" else "Standard (auto)",
+    pg=pg,
+    tgt_league=tgt_league,
+    tgt_ls=tgt_ls,
+    league_weight=league_weight,
+    market_weight=market_weight,
+    min_mins=min_mins,
+    top_n=int(top_n),
+    sel_styles=sel_styles,
+)
 if rank_img:
     st.image(rank_img, use_column_width=True)
     st.download_button("⬇️ Download Ranking Image", rank_img,
