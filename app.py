@@ -288,12 +288,27 @@ with st.sidebar:
         team_file_bytes = _override_t.read() if _override_t is not None else None
 
     st.markdown("---")
+
+    # ── Cache clear ───────────────────────────────────────────────────
+    if st.button("🔄 Clear cache & reload data", key="clear_cache"):
+        st.cache_data.clear()
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+
+    st.markdown("---")
     api_key = st.text_input("Anthropic API Key (AI Analysis)", type="password")
     st.markdown("---")
 
     # ── Candidate league filtering ────────────────────────────────────
     st.markdown("**Candidate Leagues**")
     st.caption("Controls which clubs appear in results. Player can be from any league.")
+
+    # Debug: confirm which data is loaded
+    if player_file_bytes:
+        st.caption(f"📊 {len(player_file_bytes)} file(s) loaded · {sum(len(b) for b in player_file_bytes):,} bytes total")
+    else:
+        st.caption("⚠️ No player data loaded")
 
     @st.cache_data(show_spinner=False)
     def _get_leagues(bytes_list):
@@ -311,7 +326,15 @@ with st.sidebar:
     _all_lgs = _get_leagues(tuple(player_file_bytes) if player_file_bytes else ())
 
     _all_regions = sorted({_league_region(lg) for lg in _all_lgs}) if _all_lgs else []
-    sel_regions  = st.multiselect("Regions", _all_regions, default=_all_regions, key="cf_regions")
+
+    # Fix: use session state to persist regions default so it doesn't go blank on rerun
+    if "cf_regions_default" not in st.session_state or st.session_state.get("cf_regions_all") != _all_regions:
+        st.session_state["cf_regions_default"] = _all_regions
+        st.session_state["cf_regions_all"] = _all_regions
+
+    sel_regions = st.multiselect("Regions", _all_regions,
+                                  default=st.session_state["cf_regions_default"],
+                                  key="cf_regions")
     _region_lgs  = [lg for lg in _all_lgs if _league_region(lg) in sel_regions] or _all_lgs
 
     st.markdown("##### League Presets")
