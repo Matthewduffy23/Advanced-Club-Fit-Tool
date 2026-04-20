@@ -310,33 +310,14 @@ with st.sidebar:
     else:
         st.caption("⚠️ No player data loaded")
 
-    @st.cache_data(show_spinner=False)
-    def _get_leagues(bytes_list):
-        if not bytes_list: return []
-        dfs = []
-        for b in bytes_list:
-            try:
-                df = pd.read_csv(io.BytesIO(b))
-                if 'League' in df.columns:
-                    df['League'] = df['League'].apply(_normalise_league_name)
-                    dfs.append(df[['League']].dropna())
-            except: pass
-        if not dfs: return []
-        return sorted(pd.concat(dfs)['League'].unique().tolist())
-
     _all_lgs = _get_leagues(tuple(player_file_bytes) if player_file_bytes else ())
 
     _all_regions = sorted({_league_region(lg) for lg in _all_lgs}) if _all_lgs else []
 
-    # Fix: use session state to persist regions default so it doesn't go blank on rerun
-    if "cf_regions_default" not in st.session_state or st.session_state.get("cf_regions_all") != _all_regions:
-        st.session_state["cf_regions_default"] = _all_regions
-        st.session_state["cf_regions_all"] = _all_regions
-
-    sel_regions = st.multiselect("Regions", _all_regions,
-                                  default=st.session_state["cf_regions_default"],
-                                  key="cf_regions")
-    _region_lgs  = [lg for lg in _all_lgs if _league_region(lg) in sel_regions] or _all_lgs
+    sel_regions = st.multiselect("Regions", _all_regions, default=_all_regions, key="cf_regions")
+    # If user deselected everything fall back to all
+    _active_regions = sel_regions if sel_regions else _all_regions
+    _region_lgs = [lg for lg in _all_lgs if _league_region(lg) in _active_regions] or _all_lgs
 
     st.markdown("##### League Presets")
     _pc1, _pc2, _pc3 = st.columns(3)
@@ -399,6 +380,20 @@ def _normalise_league_name(lg: str) -> str:
     if lg and not lg.endswith('.'):
         lg = lg + '.'
     return lg
+
+@st.cache_data(show_spinner=False)
+def _get_leagues(bytes_list):
+    if not bytes_list: return []
+    dfs = []
+    for b in bytes_list:
+        try:
+            df = pd.read_csv(io.BytesIO(b))
+            if 'League' in df.columns:
+                df['League'] = df['League'].apply(_normalise_league_name)
+                dfs.append(df[['League']].dropna())
+        except: pass
+    if not dfs: return []
+    return sorted(pd.concat(dfs)['League'].unique().tolist())
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
