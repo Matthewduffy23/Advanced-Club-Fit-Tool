@@ -185,7 +185,7 @@ def score_col(s):
     if s >= 48: return "#f59e0b"
     return "#ef4444"
 
-# ── LEAGUE PRESETS & REGION MAP (mirrors team_hq.py) ─────────────────
+# ── LEAGUE PRESETS & REGION MAP ───────────────────────────────────────
 PRESET_LEAGUES = {
     "Top 5 Europe":    {"England 1.","Spain 1.","Germany 1.","Italy 1.","France 1."},
     "Top 20 Europe":   {
@@ -236,7 +236,6 @@ with st.sidebar:
     from pathlib import Path as _Path
 
     def _find_file(candidates, patterns=None):
-        """Find first existing file from candidates list, then fall back to glob patterns."""
         for name in candidates:
             p = _Path(name)
             if p.exists():
@@ -249,7 +248,6 @@ with st.sidebar:
         return None
 
     # ── Player CSV ─────────────────────────────────────────────────────
-    # Priority: exact repo filename → any WORLD*.csv in cwd
     _auto_player_path = _find_file(
         ["WORLDplayers_updated.csv"],
         ["WORLD*.csv", "world*.csv"]
@@ -260,13 +258,17 @@ with st.sidebar:
         st.caption(f"📂 Auto-loaded: `{_auto_player_path.name}`")
         _override_p = st.file_uploader("Replace player CSV (optional)", type="csv",
                                         accept_multiple_files=True, key="cf_player_upload")
-        player_files = list(_override_p) if _override_p else [open(str(_auto_player_path), "rb")]
+        if len(_override_p) > 0:
+            player_file_bytes = [f.read() for f in _override_p]
+        else:
+            with open(str(_auto_player_path), "rb") as _f:
+                player_file_bytes = [_f.read()]
     else:
-        player_files = st.file_uploader("Player CSVs", type="csv",
-                                         accept_multiple_files=True, key="cf_player_upload")
+        _override_p = st.file_uploader("Player CSVs", type="csv",
+                                        accept_multiple_files=True, key="cf_player_upload")
+        player_file_bytes = [f.read() for f in _override_p] if len(_override_p) > 0 else []
 
     # ── Team Stats CSV ─────────────────────────────────────────────────
-    # Priority: exact repo filename → any WORLD_team_stats*.csv in cwd
     _auto_team_path = _find_file(
         ["WORLD_team_stats_MAR26.csv"],
         ["WORLD_team_stats*.csv", "world_team_stats*.csv"]
@@ -276,9 +278,14 @@ with st.sidebar:
     if _auto_team_path:
         st.caption(f"📂 Auto-loaded: `{_auto_team_path.name}`")
         _override_t = st.file_uploader("Replace team CSV (optional)", type="csv", key="cf_team_upload")
-        team_file = _override_t if _override_t else open(str(_auto_team_path), "rb")
+        if _override_t is not None:
+            team_file_bytes = _override_t.read()
+        else:
+            with open(str(_auto_team_path), "rb") as _f:
+                team_file_bytes = _f.read()
     else:
-        team_file = st.file_uploader("Team Stats CSV", type="csv", key="cf_team_upload")
+        _override_t = st.file_uploader("Team Stats CSV", type="csv", key="cf_team_upload")
+        team_file_bytes = _override_t.read() if _override_t is not None else None
 
     st.markdown("---")
     api_key = st.text_input("Anthropic API Key (AI Analysis)", type="password")
@@ -288,37 +295,31 @@ with st.sidebar:
     st.markdown("**Candidate Leagues**")
     st.caption("Controls which clubs appear in results. Player can be from any league.")
 
-    # We need player_df to build league list — load it early for sidebar use
-    # (cached so no performance cost when called again below)
     @st.cache_data(show_spinner=False)
-    def _get_leagues(files):
-        if not files: return []
+    def _get_leagues(bytes_list):
+        if not bytes_list: return []
         dfs = []
-        for f in files:
+        for b in bytes_list:
             try:
-                df = pd.read_csv(f)
+                df = pd.read_csv(io.BytesIO(b))
                 if 'League' in df.columns:
                     dfs.append(df[['League']].dropna())
             except: pass
         if not dfs: return []
         return sorted(pd.concat(dfs)['League'].unique().tolist())
 
-    _all_lgs = _get_leagues(tuple(player_files) if player_files else ())
+    _all_lgs = _get_leagues(tuple(player_file_bytes) if player_file_bytes else ())
 
-    # Regions
     _all_regions = sorted({_league_region(lg) for lg in _all_lgs}) if _all_lgs else []
     sel_regions  = st.multiselect("Regions", _all_regions, default=_all_regions, key="cf_regions")
-    # Fall back to all leagues if user clears regions
     _region_lgs  = [lg for lg in _all_lgs if _league_region(lg) in sel_regions] or _all_lgs
 
-    # Presets
     st.markdown("##### League Presets")
     _pc1, _pc2, _pc3 = st.columns(3)
     use_top5  = _pc1.checkbox("Top 5",  False, key="cf_top5")
     use_top20 = _pc2.checkbox("Top 20", False, key="cf_top20")
     use_efl   = _pc3.checkbox("EFL",    False, key="cf_efl")
 
-    # Normalised preset sets — no dots, lowercase, matches any format
     _PRESET_NORM = {
         "top5":  {"england 1","spain 1","germany 1","italy 1","france 1"},
         "top20": {"england 1","spain 1","germany 1","italy 1","france 1",
@@ -334,10 +335,8 @@ with st.sidebar:
     if use_top20: _active_norm |= _PRESET_NORM["top20"]
     if use_efl:   _active_norm |= _PRESET_NORM["efl"]
 
-    # Leagues in data that match the active preset
     _preset_matched = [lg for lg in _region_lgs if _lg_norm(lg) in _active_norm]
 
-    # What to show selected: preset match if any preset on, else everything
     _preset_sig = (tuple(sorted(sel_regions)), use_top5, use_top20, use_efl)
     if st.session_state.get("cf_preset_sig") != _preset_sig:
         st.session_state["cf_preset_sig"]  = _preset_sig
@@ -346,7 +345,6 @@ with st.sidebar:
     if "cf_leagues_val" not in st.session_state:
         st.session_state["cf_leagues_val"] = _region_lgs
 
-    # Clamp to what's currently available
     _current_val = [lg for lg in st.session_state["cf_leagues_val"] if lg in _region_lgs]
     if not _current_val:
         _current_val = _preset_matched if _active_norm else _region_lgs
@@ -372,11 +370,11 @@ with st.sidebar:
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def load_players(files):
+def load_players(bytes_list):
     dfs = []
-    for f in files:
+    for b in bytes_list:
         try:
-            df = pd.read_csv(f)
+            df = pd.read_csv(io.BytesIO(b))
             if 'Position' in df.columns:
                 df['_pg'] = df['Position'].apply(detect_pos)
             dfs.append(df)
@@ -389,7 +387,7 @@ def load_players(files):
             out[c] = pd.to_numeric(out[c], errors='coerce')
     return out
 
-# ── TEAM CSV COLUMN NORMALISATION (mirrors team_hq.py COL_MAP) ────────
+# ── TEAM CSV COLUMN NORMALISATION ─────────────────────────────────────
 _TEAM_COL_MAP = {
     "Team":                          ["team"],
     "League":                        ["league"],
@@ -431,11 +429,12 @@ def _normalise_team_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns=rename)
 
 @st.cache_data(show_spinner=False)
-def load_teams(f):
+def load_teams(file_bytes):
+    if file_bytes is None:
+        return pd.DataFrame()
     try:
-        df = pd.read_csv(f)
+        df = pd.read_csv(io.BytesIO(file_bytes))
         df = _normalise_team_cols(df)
-        # coerce all known numeric columns
         for c in [k for k in _TEAM_COL_MAP if k not in ("Team", "League")]:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -443,8 +442,8 @@ def load_teams(f):
     except:
         return pd.DataFrame()
 
-player_df = load_players(player_files) if player_files else pd.DataFrame()
-team_df   = load_teams(team_file)      if team_file   else pd.DataFrame()
+player_df = load_players(tuple(player_file_bytes)) if player_file_bytes else pd.DataFrame()
+team_df   = load_teams(team_file_bytes)
 
 # ── HEADER ────────────────────────────────────────────────────────────
 st.markdown('<div class="head">🏟️ CLUB FIT <span style="color:#3b82f6">FINDER</span></div>', unsafe_allow_html=True)
@@ -546,7 +545,6 @@ if run:
         cand = player_df.copy()
         if cand_leagues:
             cand = cand[cand['League'].isin(cand_leagues)]
-        # Exclude the player's own current club from candidate results
         cand = cand[cand['Team'] != tgt_team]
         if '_pg' in cand.columns:
             cand = cand[cand['_pg'] == pg]
@@ -569,7 +567,6 @@ if run:
         for f in feats:
             tgt_df[f] = pd.to_numeric(tgt_df[f], errors='coerce').fillna(0)
 
-        # ── Percentile similarity (within-league) ─────────────────────
         ref = pd.concat([cand[feats + ['League']], tgt_df[feats + ['League']].head(1)],
                         ignore_index=True)
         pct_mat = ref.groupby('League')[feats].rank(pct=True).fillna(0.5)
@@ -581,7 +578,6 @@ if run:
         pct_dist = np.sum(np.abs(cand_pct - tgt_pct) * w, axis=1)
         sim_pct  = np.exp(-2.8 * pct_dist) * 100.0
 
-        # ── Z-score similarity (within-league) ────────────────────────
         tgt_league_label = str(tgt.get('League', ''))
         act_dist = np.zeros(n_cand)
 
@@ -745,7 +741,7 @@ if run:
             min_mins=min_mins, top_n=int(top_n), sel_styles=sel_styles,
         )
 
-# ── Restore from session state — always reached on every rerun ───────
+# ── Restore from session state ────────────────────────────────────────
 if 'cf_results' not in st.session_state:
     st.stop()
 
@@ -763,7 +759,6 @@ if sel_styles:
     st.markdown("Active styles: " + "".join(f'<span class="pill">{s}</span>' for s in sel_styles),
                 unsafe_allow_html=True)
 
-# Diagnostic: warn if scores look wrong
 _max_fit = results['FinalFit'].max()
 _max_sim = results['SimPct'].max()
 if _max_fit < 1:
@@ -796,7 +791,6 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
                      min_mins=500, top_n=10, sel_styles=None):
     if df_show.empty: return None
 
-    # ── Theme palettes ────────────────────────────────────────────────
     if theme == "Dark":
         BG        = "#0a0f1c"
         ROW_A     = "#0f1628"
@@ -810,7 +804,7 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         RANK_BG   = "#111a2e"
         RANK_EDGE = "#2b3a5a"
         HDR_ACCENT = "#3b82f6"
-    else:  # Light — exact match to team_hq.py
+    else:
         BG        = "#ffffff"
         ROW_A     = "#f7f7f7"
         ROW_B     = "#ffffff"
@@ -819,17 +813,16 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         FOOT      = "#9b9b9b"
         DIV       = "#e2e2e2"
         BAR_BG    = "#e1e1e1"
-        BAR_FG    = "#bfbfbf"   # grey bar, no colour coding on light
+        BAR_FG    = "#bfbfbf"
         RANK_BG   = "#f3f3f3"
         RANK_EDGE = "#c0c0c0"
-        HDR_ACCENT = "#111111"  # player name in black on light
+        HDR_ACCENT = "#111111"
 
     GOLD = "#f59e0b"
     N    = len(df_show)
     max_v = float(df_show['FinalFit'].max()) or 1.0
     style_str = "  ·  ".join(active_styles) if active_styles else ""
 
-    # ── 1920×1080 banner ──────────────────────────────────────────────
     if export_mode == "1920×1080 (banner)":
         DPI = 100
         fig = plt.figure(figsize=(19.2, 10.8), dpi=DPI)
@@ -874,7 +867,6 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         plt.close(fig); buf.seek(0)
         return buf.getvalue()
 
-    # ── Standard — exact team_hq.py layout (normalised 0–1 coords) ───
     ROW_H    = 0.82
     HEADER_H = 1.70
     FOOT_H   = 0.80
@@ -886,12 +878,10 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     ax.set_xlim(0, 1.0); ax.set_ylim(0, TOTAL_H); ax.axis("off")
     ax.add_patch(Rectangle((0, 0), 1.0, TOTAL_H, color=BG, zorder=0))
 
-    # Header (top-left, same position as team_hq)
     title_y = TOTAL_H - 0.25
     ax.text(0.04, title_y,       "CLUB FIT FINDER",   fontsize=19, fontweight="bold", color=TXT, ha="left", va="top")
     ax.text(0.04, title_y-0.34,  player_name.upper(), fontsize=14, fontweight="bold", color=HDR_ACCENT, ha="left", va="top")
 
-    # Subtitle — Role and League only
     subtitle_parts = []
     if pg:         subtitle_parts.append(f"Role: {pg}")
     if tgt_league: subtitle_parts.append(f"League: {tgt_league}")
@@ -902,7 +892,6 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     base_y = TOTAL_H - HEADER_H
     ax.plot([0.04, 0.96], [base_y + ROW_H/2 + 0.02]*2, color=DIV, lw=1.1, zorder=2)
 
-    # Column layout — exactly matching team_hq
     LEFT, RIGHT = 0.04, 0.96
     crest_x = 0.14
     BAR_L, BAR_R = 0.66, 0.82
@@ -915,7 +904,6 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         ax.add_patch(Rectangle((LEFT, y-ROW_H/2), RIGHT-LEFT, ROW_H,
                                 color=(ROW_A if i%2==0 else ROW_B), zorder=1))
 
-        # Rank badge — scatter circle, same as team_hq
         edge_col  = GOLD if i < 3 else RANK_EDGE
         rank_color = GOLD if i < 3 else TXT
         ax.scatter([0.07], [y], s=520, facecolor=RANK_BG,
@@ -923,7 +911,6 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
         ax.text(0.07, y, str(i+1), fontsize=10, fontweight="bold",
                 color=rank_color, ha="center", va="center", zorder=5)
 
-        # Club badge at crest_x=0.14
         bdg = _badge(str(row['Team']))
         if bdg is not None:
             h, w2 = bdg.shape[:2]
@@ -931,26 +918,21 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
             ax.add_artist(AnnotationBbox(OffsetImage(bdg, zoom=z),
                           (crest_x, y), frameon=False, zorder=5))
 
-        # Team name at 0.21, league below — exactly team_hq
         ax.text(0.21, y+0.12, str(row['Team']).upper(),
                 fontsize=16, fontweight="bold", color=TXT, ha="left", va="center", zorder=5)
         ax.text(0.21, y-0.10, str(row['League']),
                 fontsize=12, color=SUB, ha="left", va="center", zorder=5)
 
-        # Fit bar — out of 100 so bars are comparable across searches
         frac = max(0.0, min(1.0, float(row['FinalFit']) / 100.0))
         ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W, BAR_H2, color=BAR_BG, zorder=2))
         ax.add_patch(Rectangle((BAR_L, y-BAR_H2/2), BAR_W*frac, BAR_H2, color=BAR_FG, zorder=3))
 
-        # Score — black numbers on light, colour-coded on dark
         fc = "#111111" if theme == "Light" else score_col(float(row['FinalFit']))
         ax.text(VAL_X, y, f"{row['FinalFit']:.0f}",
                 fontsize=16, fontweight="bold", color=fc, ha="right", va="center", zorder=6)
 
-    # ── Footer: anchored just below the last row ─────────────────────
-    # Last row bottom edge = base_y - (N-1)*ROW_H - ROW_H/2
     last_row_bottom = base_y - (N - 1) * ROW_H - ROW_H / 2
-    div_y    = last_row_bottom - 0.10   # divider line
+    div_y    = last_row_bottom - 0.10
     line1_y  = div_y - 0.08
     line2_y  = line1_y - 0.20
     line3_y  = line2_y - 0.20
@@ -960,7 +942,7 @@ def make_ranking_img(df_show, player_name, active_styles, theme="Light", export_
     _named_styles = [s for s in (sel_styles or []) if s != "Similar to Current System"]
     _lw_pct   = int(round(league_weight * 100))
     _mv_pct   = int(round(market_weight * 100))
-    _fit_pct  = 100 - _lw_pct - _mv_pct          # StyleFit share
+    _fit_pct  = 100 - _lw_pct - _mv_pct
     _sty_pct  = int(round(_fit_pct * style_blend_w)) if 'style_blend_w' in dir() else int(round(_fit_pct * 0.43))
     _play_pct = _fit_pct - _sty_pct
 
@@ -997,7 +979,6 @@ rank_img = make_ranking_img(
     top_n=_ip['top_n'],
     sel_styles=_ip['sel_styles'],
 )
-# Cache image so download button rerun doesn't regenerate or lose it
 if rank_img:
     st.session_state['cf_rank_img'] = rank_img
 if st.session_state.get('cf_rank_img'):
@@ -1025,7 +1006,6 @@ else:
     st.caption("Expand any club below to generate a full AI scouting report.")
     client_ai = anthropic.Anthropic(api_key=api_key)
 
-    # Role metrics used to compute a proxy performance score per player
     ROLE_SCORE_WEIGHTS = {
         'GK':  ['Save rate, %','Accurate passes, %','Accurate long passes, %'],
         'CB':  ['Defensive duels won, %','Aerial duels won, %','Progressive passes per 90',
@@ -1040,7 +1020,6 @@ else:
                 'Dribbles per 90','xA per 90'],
     }
 
-    # Complete Score weights (mirrors the shortlist tool)
     COMPLETE_WEIGHTS_AI = {
         'GK':  {'Save rate, %': 0.40, 'Accurate passes, %': 0.30, 'Accurate long passes, %': 0.30},
         'CB':  {'Aerial duels won, %': 0.15, 'Defensive duels won, %': 0.15,
@@ -1070,7 +1049,6 @@ else:
     }
 
     def _complete_score(player_row, pg_key, ref_pool):
-        """Compute Complete Score as percentile-weighted average vs ref_pool."""
         weights = COMPLETE_WEIGHTS_AI.get(pg_key, {})
         if not weights or ref_pool.empty:
             return 0.0
@@ -1092,7 +1070,6 @@ else:
         return round(float(np.average(vals, weights=wts)), 1)
 
     def _squad_depth_html(squad, pg_key):
-        """Build styled HTML player cards + plain text for AI prompt using Complete Score."""
         pos_players = squad[squad['_pg'] == pg_key].copy()
         if pos_players.empty:
             return "", f"No {pg_key}s in dataset."
@@ -1100,7 +1077,6 @@ else:
         cc = next((c for c in squad.columns if 'contract' in c.lower()), None)
         import re as _rec
 
-        # Reference pool = all players of same position in same league
         dest_lg   = squad['League'].iloc[0] if not squad.empty else ''
         ref_pool  = player_df[
             (player_df['League'].astype(str) == str(dest_lg)) &
@@ -1116,7 +1092,6 @@ else:
             mv      = fmt_mv(p.get('Market value', 0))
             age     = int(p.get('Age', 0) or 0)
             cscore  = _complete_score(p, pg_key, ref_pool)
-            # Contract colour
             contract_raw = str(p.get(cc, '')) if cc else ''
             cy_m = _rec.search(r'(\d{4})', contract_raw)
             cy   = int(cy_m.group(1)) if cy_m else 9999
@@ -1124,7 +1099,6 @@ else:
             if cy <= 2026:   cc_col = '#ef4444'
             elif cy <= 2027: cc_col = '#f59e0b'
             else:            cc_col = '#64748b'
-            # Complete score colour
             cs_col = '#22c55e' if cscore >= 65 else ('#f59e0b' if cscore >= 45 else '#ef4444')
             html_rows.append(
                 f'<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;'
@@ -1142,7 +1116,6 @@ else:
         return "".join(html_rows), "\n".join(text_rows)
 
     def _team_style_data(ai_team, dest_league):
-        """Pull key team metrics and compute percentile vs league from team_df."""
         if team_df.empty or 'Team' not in team_df.columns:
             return ""
         team_row = team_df[team_df['Team'] == ai_team]
@@ -1288,7 +1261,6 @@ SUMMARY LINE: Max 15 words. Start with SIGN / MONITOR / PASS."""
                     f'<p style="margin:0;line-height:1.7;">{content}</p></div>',
                     unsafe_allow_html=True)
 
-    # ── Per-club expanders ────────────────────────────────────────────
     for _, row in results.iterrows():
         team_name = row['Team']
         fit_score = row['FinalFit']
@@ -1315,7 +1287,6 @@ SUMMARY LINE: Max 15 words. Start with SIGN / MONITOR / PASS."""
                         except Exception as e:
                             st.error(f"AI error: {e}")
 
-    # ── Final Summary Report ──────────────────────────────────────────
     st.markdown("---")
     st.markdown('<div class="sec">📋 Final Summary Report</div>', unsafe_allow_html=True)
 
