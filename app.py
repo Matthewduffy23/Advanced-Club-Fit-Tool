@@ -225,6 +225,28 @@ def _league_country(lg: str) -> str:
 def _league_region(lg: str) -> str:
     return COUNTRY_TO_REGION.get(_league_country(lg), "Other")
 
+# ── LEAGUE NAME NORMALISATION ─────────────────────────────────────────
+def _normalise_league_name(lg: str) -> str:
+    """Ensure league names always end with a dot e.g. 'England 1' -> 'England 1.'"""
+    lg = str(lg).strip()
+    if lg and not lg.endswith('.'):
+        lg = lg + '.'
+    return lg
+
+@st.cache_data(show_spinner=False)
+def _get_leagues(bytes_list):
+    if not bytes_list: return []
+    dfs = []
+    for b in bytes_list:
+        try:
+            df = pd.read_csv(io.BytesIO(b))
+            if 'League' in df.columns:
+                df['League'] = df['League'].apply(_normalise_league_name)
+                dfs.append(df[['League']].dropna())
+        except: pass
+    if not dfs: return []
+    return sorted(pd.concat(dfs)['League'].unique().tolist())
+
 # ── SIDEBAR ───────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown('<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:1.3rem;font-weight:800;color:#3b82f6;padding:10px 0 2px 0">🏟️ CLUB FIT</div>', unsafe_allow_html=True)
@@ -372,28 +394,6 @@ with st.sidebar:
     st.markdown("**Image Export**")
     img_theme  = st.radio("Theme",  ["Light", "Dark"], index=0, horizontal=True, key="img_theme")
     img_format = st.radio("Format", ["Standard", "1920×1080"], index=0, horizontal=True, key="img_format")
-
-# ── LEAGUE NAME NORMALISATION ─────────────────────────────────────────
-def _normalise_league_name(lg: str) -> str:
-    """Ensure league names always end with a dot e.g. 'England 1' -> 'England 1.'"""
-    lg = str(lg).strip()
-    if lg and not lg.endswith('.'):
-        lg = lg + '.'
-    return lg
-
-@st.cache_data(show_spinner=False)
-def _get_leagues(bytes_list):
-    if not bytes_list: return []
-    dfs = []
-    for b in bytes_list:
-        try:
-            df = pd.read_csv(io.BytesIO(b))
-            if 'League' in df.columns:
-                df['League'] = df['League'].apply(_normalise_league_name)
-                dfs.append(df[['League']].dropna())
-        except: pass
-    if not dfs: return []
-    return sorted(pd.concat(dfs)['League'].unique().tolist())
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
