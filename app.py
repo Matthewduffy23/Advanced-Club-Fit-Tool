@@ -318,6 +318,7 @@ with st.sidebar:
             try:
                 df = pd.read_csv(io.BytesIO(b))
                 if 'League' in df.columns:
+                    df['League'] = df['League'].apply(_normalise_league_name)
                     dfs.append(df[['League']].dropna())
             except: pass
         if not dfs: return []
@@ -391,6 +392,14 @@ with st.sidebar:
     img_theme  = st.radio("Theme",  ["Light", "Dark"], index=0, horizontal=True, key="img_theme")
     img_format = st.radio("Format", ["Standard", "1920×1080"], index=0, horizontal=True, key="img_format")
 
+# ── LEAGUE NAME NORMALISATION ─────────────────────────────────────────
+def _normalise_league_name(lg: str) -> str:
+    """Ensure league names always end with a dot e.g. 'England 1' -> 'England 1.'"""
+    lg = str(lg).strip()
+    if lg and not lg.endswith('.'):
+        lg = lg + '.'
+    return lg
+
 # ── LOAD DATA ─────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_players(bytes_list):
@@ -398,6 +407,8 @@ def load_players(bytes_list):
     for b in bytes_list:
         try:
             df = pd.read_csv(io.BytesIO(b))
+            if 'League' in df.columns:
+                df['League'] = df['League'].apply(_normalise_league_name)
             if 'Position' in df.columns:
                 df['_pg'] = df['Position'].apply(detect_pos)
             dfs.append(df)
@@ -458,6 +469,8 @@ def load_teams(file_bytes):
     try:
         df = pd.read_csv(io.BytesIO(file_bytes))
         df = _normalise_team_cols(df)
+        if 'League' in df.columns:
+            df['League'] = df['League'].apply(_normalise_league_name)
         for c in [k for k in _TEAM_COL_MAP if k not in ("Team", "League")]:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
