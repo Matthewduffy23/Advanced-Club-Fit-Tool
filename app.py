@@ -749,11 +749,14 @@ if run:
 
         club_agg['FinalFit'] = (adj * (1 - market_weight) + mv_score * market_weight).round(1)
 
+        # Store a larger pool (top_n * 5, min 50) so excluded teams
+        # can be replaced by next-ranked clubs without re-running scoring
+        _pool_size = max(50, int(top_n) * 5)
         results = (
             club_agg[['Team','League','LS','SimPct','FinalFit','AvgMV']]
             .sort_values('FinalFit', ascending=False)
             .reset_index(drop=True)
-            .head(int(top_n))
+            .head(_pool_size)
         )
         results['FinalFit'] = results['FinalFit'].fillna(0).round(1)
         results['SimPct']   = results['SimPct'].fillna(0).round(1)
@@ -797,6 +800,46 @@ if _max_fit < 1:
                f"Check that your player CSV league names match the LEAGUE_STRENGTHS keys "
                f"(e.g. 'England 1.' not 'Premier League'). "
                f"Target league detected as: **{tgt_league}** → strength {tgt_ls:.0f}")
+
+# ── EXCLUDE TEAMS FILTER ──────────────────────────────────────────────
+# Full scored pool is in session state. We show top_n after exclusions,
+# so removing a team just reveals the next one — no rescoring needed.
+_full_results = st.session_state['cf_results']
+
+_excl_key = f"cf_exclude_{sel_name}"
+if _excl_key not in st.session_state:
+    st.session_state[_excl_key] = []
+
+# Options = every team in the scored pool so you can always remove anything visible
+_pool_teams = _full_results['Team'].tolist()
+
+_col_excl, _col_clear = st.columns([5, 1])
+with _col_excl:
+    excluded_teams = st.multiselect(
+        "🚫 Remove teams from list",
+        options=_pool_teams,
+        default=[t for t in st.session_state[_excl_key] if t in _pool_teams],
+        key=f"excl_ms_{sel_name}",
+        placeholder="Type or select a team to remove…",
+    )
+with _col_clear:
+    st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
+    if st.button("↺ Reset", key="excl_clear"):
+        st.session_state[_excl_key] = []
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.session_state[_excl_key] = excluded_teams
+
+# Apply exclusions, take top_n from what remains, re-rank from 1
+_visible = (
+    _full_results[~_full_results['Team'].isin(excluded_teams)]
+    .head(int(_ip['top_n']))
+    .copy()
+    .reset_index(drop=True)
+)
+_visible['Rank'] = range(1, len(_visible) + 1)
+results = _visible
 
 # ── Badge fetching ────────────────────────────────────────────────────
 try:
