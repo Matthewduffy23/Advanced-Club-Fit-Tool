@@ -49,17 +49,44 @@ div[data-testid="stExpander"]{background:#111827;border-color:#1e2d42;border-rad
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────
 LEAGUE_STRENGTHS = {
-    'England 1.':100,'Spain 1.':98,'Germany 1.':96,'Italy 1.':94,'France 1.':88,
-    'Portugal 1.':82,'Netherlands 1.':80,'Belgium 1.':78,'Scotland 1.':70,
-    'Turkey 1.':72,'Russia 1.':68,'Ukraine 1.':66,'Austria 1.':64,
-    'Switzerland 1.':62,'Greece 1.':60,'Czech 1.':58,'Denmark 1.':56,
-    'Sweden 1.':54,'Poland 1.':52,'Norway 1.':50,'Croatia 1.':49,
-    'Serbia 1.':47,'Romania 1.':45,'Slovakia 1.':43,'Slovenia 1.':41,
-    'Bulgaria 1.':39,'Hungary 1.':37,'Finland 1.':35,'Israel 1.':60,
-    'Cyprus 1.':33,'England 2.':78,'England 3.':58,'England 4.':45,
-    'Germany 2.':72,'Spain 2.':62,'Italy 2.':60,'France 2.':58,
-    'Portugal 2.':52,'Netherlands 2.':50,'Scotland 2.':38,
-    'Venezuela 1.':35,'Uruguay 1.':52,'Japan 1.':55,'Egypt 1.':40,
+'England 1.':100.00,'Spain 1.':88,'Germany 1.':88,'Italy 1.':87,'Portugal 1.':80,
+'France 1.':86,'Brazil 1.':79,'England 2.':76,'Belgium 1.':76,'Spain 2.':72,
+'Ukraine 1.':65,'Argentina 1.':72,'Denmark 1.':70.78,'USA 1.':70.00,'Poland 1.':68,
+'Turkey 1.':71,'Netherlands 1.':70,'Croatia 1.':68.43,'Germany 2.':68.04,'Japan 1.':68,
+'Switzerland 1.':67.45,'Norway 1.':66.67,'Mexico 1.':66.47,'Sweden 1.':68,'Colombia 1.':67,
+'Czech 1.':67,'Ecuador 1.':65.29,'Saudi 1.':65.00,'Greece 1.':66,'Argentina 2.':64.12,
+'France 2.':65,'Italy 2.':64,'Hungary 1.':65,'Austria 1.':66,'Morocco 1.':63.14,
+'Korea 1.':62.75,'Paraguay 1.':62.55,'Russia 1.':66,'England 3.':59,'Romania 1.':61.76,
+'Scotland 1.':64,'Algeria 1.':61.57,'Uruguay 1.':60.39,'Cyprus 1.':60.00,'Chile 1.':59.80,
+'Egypt 1.':59.22,'Israel 1.':60,'Brazil 2.':59,'Slovenia 1.':59,'Bolivia 1.':57.25,
+'Slovakia 1.':58,'Azerbaijan 1.':55,'South Africa 1.':56.27,'UAE 1.':55.49,'Costa Rica 1.':54.90,
+'Peru 1.':54.90,'Germany 3.':56,'Spain 3.':56,'Portugal 2.':56,'Bulgaria 1.':57,
+'Australia 1.':55,'Serbia 1.':58,'Poland 2.':52.00,'Norway 2.':52.00,'Sweden 2.':52.00,
+'Albania 1.':54,'Bosnia 1.':54,'Kosovo 1.':54,'Japan 2.':54,'England 4.':51,
+'Ireland 1.':51,'Kazakhstan 1.':50.39,'Nigeria 1.':50.00,'Denmark 2.':50.00,'Scotland 2.':53,
+'France 3.':54,'Ecuador 2.':49.61,'Romania 2.':49.61,'Tunisia 1.':53,'Venezuela 1.':48.63,
+'Belgium 2.':48.43,'Finland 1.':48.43,'Colombia 2.':48.43,'Czech 2.':50,'Northern Ireland 1.':48.00,
+'Armenia 1.':47.84,'Montenegro 1.':47.84,'Georgia 1.':47.65,'Switzerland 2.':50,'Zambia 1.':46.47,
+'Uzbekistan 1.':46.27,'Cyprus 2.':46.27,'Iceland 1.':46.08,'Italy 3.':52,'North Macedonia 1.':44.71,
+'China 1.':44.70,'Turkey 2.':50,'Panama 1.':44.10,'Korea 2.':43.53,'Brazil 3.':43.14,
+'Lithuania 1.':42.35,'Netherlands 2.':46,'Malta 1.':41.96,'Moldova 1.':40.39,'Estonia 1.':40.00,
+'USA 2.':40.00,'Latvia 1.':40.00,'Wales 1.':40.00,'Hungary 2.':40.00,'Norway 3.':40.00,
+'Montenegro 2.':39.80,'Canada 1.':38.24,'Austria 2.':38.24,'Israel 2.':40,'England 7.':37.25,
+'Germany 4.':40,'Portugal 3.':40,'Faroe Islands 1.':35.02,'Saudi 2.':35.02,'Qatar 1.':45.00,
+'England 5.':33.33,'Andorra 1.':33.33,'England 9.':31.37,'Serbia 2.':35,'Brazil 4.':30.00,
+'Denmark 3.':29.41,'Sweden 3.':29.41,'Slovenia 2.':30,'Slovakia 2.':30,'Italy 4.':30,
+'Ukraine 2.':30,'Greece 2.':30,'Netherlands 3.':27.06,'Germany 5.':25.00,'Italy 5.':25.00,
+'Portugal 4.':25.00,'USA 3.':22.55,'Scotland 3.':20.00,'Sweden 4.':20.00,'Switzerland 3.':20.00,
+'Czech 3.':20.00,'Denmark 4.':20.00,'Germany 6.':20.00,'England 6.':16.08,'Kazakhstan 2.':16.08,
+'Kyrgyzstan 1.':16.08,'Malta 2.':16.08,'England 8.':15.69,'Ukraine 3.':15.00,'Serbia 3.':15.00,
+'Ireland 2.':10.00,'England 10.':3.92,'Estonia 2.':3.00,
+'AFCON Qualifiers.':50.0,'AFCON U17.':50.0,'AFCON U20.':50.0,'AFCON.':50.0,
+'Africa Champions League.':50.0,'Africa Europa League.':50.0,'Asia Champions League.':50.0,
+'Asia WC Qualifiers.':50.0,'Champions League Qualifiers.':50.0,'Champions League.':50.0,
+'Club World Cup.':50.0,'Conference League Qualifiers.':50.0,'Conference League.':50.0,
+'Copa Libertadores.':50.0,'Europa League Qualifiers.':50.0,'Europa League.':50.0,
+'S.America Qualifiers.':50.0,'U17 World Cup.':50.0,'U20 Copa.':50.0,'U20 World Cup.':50.0,
+'UEFA U19 Euros.':50.0,'UEFA U21 Euros.':50.0,'UEFA WC Qualifiers.':50.0,
 }
 
 POS_MAP = {
@@ -254,36 +281,21 @@ with st.sidebar:
 
     st.markdown("**Data**")
 
-    import glob as _glob
     from pathlib import Path as _Path
 
-    def _find_file(candidates, patterns=None):
-        for name in candidates:
-            p = _Path(name)
-            if p.exists():
-                return p
-        if patterns:
-            for pat in patterns:
-                found = sorted(_Path.cwd().glob(pat))
-                if found:
-                    return found[0]
-        return None
-
     # ── Player CSV ─────────────────────────────────────────────────────
-    _auto_player_path = _find_file(
-        ["WORLDplayers_updated.csv"],
-        ["WORLD*.csv", "world*.csv"]
-    )
+    _all_csvs = sorted(_Path.cwd().glob("*.csv"), key=lambda f: f.stat().st_mtime, reverse=True)
+    _all_csv_names = [f.name for f in _all_csvs]
 
     st.markdown("**Player CSV**")
-    if _auto_player_path:
-        st.caption(f"📂 Auto-loaded: `{_auto_player_path.name}`")
-        _override_p = st.file_uploader("Replace player CSV (optional)", type="csv",
+    if _all_csv_names:
+        _player_choice = st.selectbox("Player CSV", _all_csv_names, index=0, key="cf_player_sel")
+        _override_p = st.file_uploader("Or upload player CSV(s)", type="csv",
                                         accept_multiple_files=True, key="cf_player_upload")
         if len(_override_p) > 0:
             player_file_bytes = [f.read() for f in _override_p]
         else:
-            with open(str(_auto_player_path), "rb") as _f:
+            with open(str(_Path.cwd() / _player_choice), "rb") as _f:
                 player_file_bytes = [_f.read()]
     else:
         _override_p = st.file_uploader("Player CSVs", type="csv",
@@ -291,19 +303,14 @@ with st.sidebar:
         player_file_bytes = [f.read() for f in _override_p] if len(_override_p) > 0 else []
 
     # ── Team Stats CSV ─────────────────────────────────────────────────
-    _auto_team_path = _find_file(
-        ["WORLD_team_stats_MAR26.csv"],
-        ["WORLD_team_stats*.csv", "world_team_stats*.csv"]
-    )
-
     st.markdown("**Team Stats CSV**")
-    if _auto_team_path:
-        st.caption(f"📂 Auto-loaded: `{_auto_team_path.name}`")
-        _override_t = st.file_uploader("Replace team CSV (optional)", type="csv", key="cf_team_upload")
+    if _all_csv_names:
+        _team_choice = st.selectbox("Team Stats CSV", _all_csv_names, index=0, key="cf_team_sel")
+        _override_t = st.file_uploader("Or upload team CSV", type="csv", key="cf_team_upload")
         if _override_t is not None:
             team_file_bytes = _override_t.read()
         else:
-            with open(str(_auto_team_path), "rb") as _f:
+            with open(str(_Path.cwd() / _team_choice), "rb") as _f:
                 team_file_bytes = _f.read()
     else:
         _override_t = st.file_uploader("Team Stats CSV", type="csv", key="cf_team_upload")
