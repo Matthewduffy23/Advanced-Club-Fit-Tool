@@ -288,7 +288,17 @@ with st.sidebar:
     # previously both selectors defaulted to whatever file sorted first
     # overall, so the same file (often a team file) landed as the default
     # in BOTH "Player CSV" and "Team Stats CSV" regardless of type.
-    _all_csvs = sorted(_Path.cwd().glob("*.csv"), key=lambda f: f.stat().st_mtime, reverse=True)
+    # Season from the filename, not st_mtime. mtime was inverted: the split
+    # scripts write seasons newest-first and copy2 preserves those timestamps, so
+    # the 2026-27 files had the OLDEST mtime and both selectors defaulted to
+    # 2025-26. _season_key reads the year from either naming pattern
+    # (2026-27WORLDFULL.csv and WORLDTEAMS2026-27.csv). Duplicated per repo
+    # rather than imported — separate repos, no shared package.
+    def _season_key(name):
+        m = re.search(r"(\d{4})", str(name))
+        return int(m.group(1)) if m else -1
+
+    _all_csvs = sorted(_Path.cwd().glob("*.csv"), key=lambda f: _season_key(f.name), reverse=True)
     _player_csv_names = [f.name for f in _all_csvs if "WORLDTEAMS" not in f.name]
     _team_csv_names = [f.name for f in _all_csvs if "WORLDTEAMS" in f.name]
 
